@@ -1,0 +1,1006 @@
+-- Optional snapshot syntax enrichment. All ownership and budgets are process-wide.
+-- Redraw reads ready numeric records only; parsing/querying happens on the main-loop worker.
+local M = { namespace = vim.api.nvim_create_namespace('searchlight_syntax') }
+local sessions = require('searchlight.sessions')
+local results = require('searchlight.results')
+local limits = {
+  source_bytes = 128 * 1024,
+  parsers = 2,
+  retained_bytes = 256 * 1024,
+  managed_bytes = 2 * 1024 * 1024,
+  spans = 8192,
+  rows = 256,
+  blocks = 1024,
+  chunks = 256,
+  chunk_lines = 40,
+  captures = 1024,
+  line_bytes = 4096,
+  demands = 8,
+  languages = 8,
+  failures = 64,
+  missing = 64,
+  groups = 1024,
+  batch_ms = 3,
+}
+-- One global cache owns entries, parser/text capacity, chunks and lookup records.
+local cache = {
+  entries = {},
+  failures = {},
+  missing = {},
+  languages = {},
+  groups = {},
+  group_ids = {},
+  clock = 0,
+  revision = 0,
+}
+-- Windows own their demands, packed mappings and temporary mapper allocations.
+local viewport = { demands = {}, serial = 0, request_pending = false }
+-- Scheduled work and the one in-flight parse share process-wide progress.
+local progress = {
+  busy = false,
+  pending = false,
+  redraw_pending = false,
+  reload_pending = false,
+  initialized = false,
+}
+-- maps[i + 0..5]: panel row (0-based), source line (1-based), byte gutter,
+-- contiguous line-byte lengths, canonical source path, SHA-256:language key.
+-- spans[i + 0..4]: source line (1-based), left/right byte offsets (right exclusive),
+-- interned group index, priority rank below the search match layer.
+local MAP_WIDTH, SPAN_WIDTH = 6, 5
+local counters = {
+  parsers = 0,
+  retained_bytes = 0,
+  managed_bytes = 0,
+  spans = 0,
+  blocks = 0,
+  rows = 0,
+  demands = 0,
+  languages = 0,
+  failures = 0,
+  missing = 0,
+  groups = 0,
+  chunks = 0,
+  parses = 0,
+  extractions = 0,
+  destroyed = 0,
+  dropped = 0,
+  max_batch_ms = 0,
+}
+local high_water = {}
+local function count(name, amount)
+  counters[name] = counters[name] + amount
+  high_water[name] = math.max(high_water[name] or 0, counters[name])
+end
+local adapter = {
+  now = function()
+    return vim.uv.hrtime() / 1e6
+  end,
+  language = function(snapshot)
+    local ft
+    if snapshot.buf and vim.api.nvim_buf_is_valid(snapshot.buf) then
+      ft = vim.bo[snapshot.buf].filetype
+    else
+      -- Metadata only: never bufadd/bufload, and never start a source highlighter/LSP.
+      local buf = vim.fn.bufnr(snapshot.path)
+      if buf >= 0 and vim.api.nvim_buf_is_valid(buf) then
+        ft = vim.bo[buf].filetype
+      end
+    end
+    if not ft or ft == '' then
+      ft = vim.filetype.match({ filename = snapshot.path, contents = snapshot.lines })
+    end
+    return ft and vim.treesitter.language.get_lang(ft)
+  end,
+  query = function(lang)
+    return vim.treesitter.query.get(lang, 'highlights')
+  end,
+  load = function(lang)
+    return vim.treesitter.language.add(lang)
+  end,
+  parser = function(text, lang)
+    -- parse(false) uses the parent tree only. Unverified injections must not load languages.
+    return vim.treesitter.get_string_parser(text, lang)
+  end,
+  range = function(node, text, metadata)
+    local r = vim.treesitter.get_range(node, text, metadata)
+    return r[1], r[2], r[4], r[5]
+  end,
+}
+local default_adapter = adapter
+local default_limits = vim.deepcopy(limits)
+local function now()
+  return adapter.now()
+end
+local function tick()
+  cache.clock = cache.clock + 1
+  return cache.clock
+end
+local function reserve(bytes)
+  if counters.managed_bytes + bytes > limits.managed_bytes then
+    return false
+  end
+  count('managed_bytes', bytes)
+  return true
+end
+local function release(bytes)
+  counters.managed_bytes = counters.managed_bytes - bytes
+end
+local function remove_record(records, name, key)
+  if records[key] then
+    records[key] = nil
+    counters[name] = counters[name] - 1
+    release(512)
+  end
+end
+local function clear_records(records, name)
+  for key in pairs(records) do
+    remove_record(records, name, key)
+  end
+end
+local function release_language(lang)
+  cache.languages[lang] = nil
+  counters.languages = counters.languages - 1
+  release(256)
+end
+local function release_groups()
+  release(#cache.groups * 512)
+  cache.groups, cache.group_ids = {}, {}
+  counters.groups = 0
+end
+local function redraw()
+  if progress.redraw_pending then
+    return
+  end
+  progress.redraw_pending = true
+  vim.schedule(function()
+    progress.redraw_pending = false
+    if vim.api.nvim__redraw then
+      vim.api.nvim__redraw({ valid = false })
+    else
+      vim.cmd('redraw!')
+    end
+  end)
+end
+local function record(records, name, key, cooldown)
+  if #key > 256 then
+    return
+  end
+  if not records[key] then
+    if counters[name] == limits[name] then
+      local oldest, age
+      for k, v in pairs(records) do
+        if not age or v[1] < age then
+          oldest, age = k, v[1]
+        end
+      end
+      remove_record(records, name, oldest)
+    end
+    if not reserve(512) then
+      return
+    end
+    count(name, 1)
+  end
+  records[key] = { tick(), cooldown and now() + cooldown or math.huge }
+end
+local function suppressed(records, key)
+  return records[key] and records[key][2] > now()
+end
+local function release_mapper(d)
+  if d.scratch then
+    release(d.scratch)
+    d.scratch = nil
+  end
+  d.mapper = nil
+end
+local function drop_demand(win)
+  local d = viewport.demands[win]
+  if not d then
+    return
+  end
+  release_mapper(d)
+  release(d.bytes)
+  counters.blocks = counters.blocks - #d.maps / MAP_WIDTH
+  counters.rows = counters.rows - d.rows
+  counters.demands = counters.demands - 1
+  viewport.demands[win] = nil
+end
+local function drop_demands(id)
+  for win, d in pairs(viewport.demands) do
+    if not id or d.id == id then
+      drop_demand(win)
+    end
+  end
+end
+local function pinned(key)
+  for _, d in pairs(viewport.demands) do
+    for i = 1, #d.maps, MAP_WIDTH do
+      if d.maps[i + 5] == key then
+        return true
+      end
+    end
+  end
+  return false
+end
+local function release_chunk(chunk)
+  counters.spans = counters.spans - #chunk.spans / SPAN_WIDTH
+  counters.chunks = counters.chunks - 1
+  release(256 + #chunk.spans / SPAN_WIDTH * 128)
+end
+local function remove_chunk(e, first)
+  if e.chunks[first] then
+    release_chunk(e.chunks[first])
+    e.chunks[first] = nil
+  end
+end
+local function clear_chunks(e)
+  for first in pairs(e.chunks) do
+    remove_chunk(e, first)
+  end
+end
+local function reserve_parser(e, text)
+  count('parsers', 1)
+  count('retained_bytes', #text)
+  e.text, e.used, e.active = text, tick(), true
+end
+local function release_parser(e)
+  if e.text then
+    if e.parser then
+      pcall(e.parser.destroy, e.parser)
+      counters.destroyed = counters.destroyed + 1
+    end
+    counters.parsers = counters.parsers - 1
+    counters.retained_bytes = counters.retained_bytes - #e.text
+    e.parser, e.tree, e.text = nil, nil, nil
+  end
+end
+local function evict(key)
+  local e = cache.entries[key]
+  if not e or e.active then
+    return false
+  end
+  clear_chunks(e)
+  release_parser(e)
+  release(2048)
+  cache.entries[key] = nil
+  e.parser, e.tree, e.query, e.text, e.chunks = nil, nil, nil, nil, nil
+  return true
+end
+local function evict_inactive()
+  local oldest, age
+  for key, e in pairs(cache.entries) do
+    if not e.active and not pinned(key) and (not age or e.used < age) then
+      oldest, age = key, e.used
+    end
+  end
+  return oldest and evict(oldest)
+end
+local function release_inactive_parser(except_key)
+  local oldest
+  for key, e in pairs(cache.entries) do
+    if key ~= except_key and e.text and not e.active and (not oldest or e.used < oldest.used) then
+      oldest = e
+    end
+  end
+  if oldest then
+    -- Visible colors own cached spans, not native trees or source strings. Recycle the
+    -- parser capacity without erasing colors already extracted for another group.
+    release_parser(oldest)
+    return true
+  end
+  return false
+end
+local function trim_spans()
+  for key, e in pairs(cache.entries) do
+    for first, c in pairs(e.chunks) do
+      local visible = false
+      for _, d in pairs(viewport.demands) do
+        for i = 1, #d.maps, MAP_WIDTH do
+          if
+            d.maps[i + 5] == e.key
+            and d.maps[i + 1] < first + c.lines
+            and d.maps[i + 1] + #d.maps[i + 3] > first
+          then
+            visible = true
+          end
+        end
+      end
+      if not visible then
+        remove_chunk(e, first)
+      end
+    end
+    if not e.text and not next(e.chunks) then
+      evict(key)
+    end
+  end
+end
+local function intern(name)
+  if cache.group_ids[name] then
+    return cache.group_ids[name]
+  end
+  if #name > 256 or #cache.groups >= limits.groups or not reserve(512) then
+    return nil
+  end
+  local id = #cache.groups + 1
+  -- Resolve named groups outside redraw. Creating a group during redraw can invalidate
+  -- the same screen repeatedly; numeric IDs still follow colorscheme relinking.
+  cache.groups[id], cache.group_ids[name] = vim.api.nvim_get_hl_id_by_name(name), id
+  counters.groups = id
+  high_water.groups = id
+  return id
+end
+local worker
+local function request_from_redraw()
+  if not viewport.request_pending then
+    viewport.request_pending = true
+    vim.schedule(function()
+      viewport.request_pending = false
+      M.request()
+    end)
+  end
+end
+local function schedule_worker()
+  if not progress.pending and not progress.busy then
+    progress.pending = true
+    vim.schedule(function()
+      progress.pending = false
+      worker()
+    end)
+  end
+end
+local function valid(d)
+  local s = sessions.by_id[d.id]
+  return sessions.owns(s)
+    and not s.layout_invalid
+    and s.config.syntax_highlighting
+    and s.generation == d.generation
+    and s.layout_revision == d.layout
+    and vim.api.nvim_win_is_valid(d.win)
+    and vim.api.nvim_win_get_buf(d.win) == s.buf
+    and vim.api.nvim_win_get_tabpage(d.win) == vim.api.nvim_get_current_tabpage()
+end
+local function parse_entry(e)
+  local key = e.key
+  progress.busy = true
+  counters.parses = counters.parses + 1
+  local started, done = now(), false
+  local function finish(err, trees)
+    if done then
+      return
+    end
+    done, progress.busy, e.active = true, false, false
+    local elapsed = now() - started
+    if cache.entries[key] ~= e then
+      schedule_worker()
+      return
+    end
+    if err or not trees or not trees[1] or elapsed > 25 then
+      record(cache.failures, 'failures', key, 30000)
+      evict(key)
+    else
+      e.tree = trees[1]
+    end
+    schedule_worker()
+  end
+  -- Public callback parsing yields cooperatively on supported Neovim versions (0.11+).
+  -- Older supported versions parse synchronously; the source cap remains essential.
+  local parsed, err = pcall(function()
+    if vim.fn.has('nvim-0.11') == 1 then
+      e.parser:parse(false, finish)
+    else
+      finish(nil, e.parser:parse(false))
+    end
+  end)
+  if not parsed then
+    finish(err)
+  end
+end
+local function admit(snapshot, lang, key)
+  local e = cache.entries[key]
+  if e and (e.tree or e.active) then
+    e.used = tick()
+    return e
+  end
+  if
+    #snapshot.text > limits.source_bytes
+    or suppressed(cache.failures, key)
+    or suppressed(cache.missing, lang)
+  then
+    return
+  end
+  if not cache.languages[lang] and counters.languages == limits.languages then
+    return
+  end
+  while
+    counters.parsers >= limits.parsers
+    or counters.retained_bytes + #snapshot.text > limits.retained_bytes
+    or counters.managed_bytes + (e and 0 or 2048) > limits.managed_bytes
+  do
+    if not evict_inactive() and not release_inactive_parser(key) then
+      return
+    end
+  end
+  if not e then
+    if not reserve(2048) then
+      return
+    end
+    e = { key = key, lang = lang, chunks = {} }
+    cache.entries[key] = e
+  end
+  -- Reserve native parser/source capacity before query lookup or parser construction.
+  reserve_parser(e, snapshot.text)
+  local new_language = not cache.languages[lang]
+  if new_language then
+    if not reserve(256) then
+      e.active = false
+      evict(key)
+      return
+    end
+    cache.languages[lang] = true
+    count('languages', 1)
+  end
+  local loaded, available = pcall(adapter.load, lang)
+  if not loaded or not available then
+    if new_language then
+      release_language(lang)
+    end
+    record(cache.missing, 'missing', lang)
+    e.active = false
+    evict(key)
+    return
+  end
+  local ok, query = pcall(adapter.query, lang)
+  local parser_ok, parser = false, nil
+  if ok and query then
+    parser_ok, parser = pcall(adapter.parser, e.text, lang)
+  end
+  if not parser_ok or not parser then
+    record(cache.missing, 'missing', lang)
+    e.active = false
+    evict(key)
+    return
+  end
+  e.query, e.parser = query, parser
+  parse_entry(e)
+  return e
+end
+
+local function chunk_for(e, line)
+  for first, chunk in pairs(e.chunks) do
+    if line >= first and line < first + chunk.lines then
+      return chunk, first
+    end
+  end
+end
+local function reserve_chunk(lines)
+  if counters.chunks >= limits.chunks or not reserve(256) then
+    return
+  end
+  count('chunks', 1)
+  return { spans = {}, lines = lines }
+end
+local function publish_chunk(e, first, chunk, priorities)
+  local spans = chunk.spans
+  -- Rank priorities within a chunk, preserving overlap order below the match layer (2000).
+  local ordered = {}
+  for priority in pairs(priorities) do
+    ordered[#ordered + 1] = priority
+  end
+  table.sort(ordered)
+  for rank, priority in ipairs(ordered) do
+    priorities[priority] = rank + 10
+  end
+  for i = 5, #spans, SPAN_WIDTH do
+    spans[i] = priorities[spans[i]]
+  end
+  e.chunks[first] = chunk
+  redraw()
+end
+local function extract(e, snapshot, first, last)
+  local failure_key = e.key .. ':' .. first
+  if suppressed(cache.failures, failure_key) then
+    return
+  end
+  local chunk = reserve_chunk(last - first + 1)
+  if not chunk then
+    record(cache.failures, 'failures', failure_key, 30000)
+    return
+  end
+  local spans, visited, started = chunk.spans, 0, now()
+  local priorities = {}
+  counters.extractions = counters.extractions + 1
+  local ok = pcall(function()
+    for id, node, metadata in e.query:iter_captures(e.tree:root(), e.text, first - 1, last) do
+      visited = visited + 1
+      high_water.captures = math.max(high_water.captures or 0, visited)
+      if visited >= limits.captures or now() - started > limits.batch_ms then
+        error('syntax chunk budget')
+      end
+      local name = e.query.captures[id]
+      metadata = metadata or {}
+      local capture = metadata[id] or {}
+      if name and name:sub(1, 1) ~= '_' and not capture.conceal and not metadata.conceal then
+        local group = intern('@' .. name .. '.' .. e.lang)
+        if not group then
+          error('syntax group budget')
+        end
+        local sr, sc, er, ec = adapter.range(node, e.text, capture)
+        local priority = tonumber(capture.priority or metadata.priority) or 100
+        if priority ~= priority or math.abs(priority) == math.huge then
+          priority = 100
+        end
+        for line = math.max(first, sr + 1), math.min(last, er + 1) do
+          local length = #snapshot.lines[line]
+          local left = line == sr + 1 and math.max(0, sc) or 0
+          local right = math.min(length, line == er + 1 and ec or length)
+          if length <= limits.line_bytes and right > left then
+            if counters.spans >= limits.spans or not reserve(128) then
+              error('syntax span budget')
+            end
+            count('spans', 1)
+            local n = #spans
+            spans[n + 1], spans[n + 2], spans[n + 3], spans[n + 4], spans[n + 5] =
+              line, left, right, group, priority
+            priorities[priority] = true
+          end
+        end
+      end
+    end
+  end)
+  local elapsed = now() - started
+  counters.max_batch_ms = math.max(counters.max_batch_ms, elapsed)
+  if not ok or elapsed > limits.batch_ms then
+    release_chunk(chunk)
+    counters.dropped = counters.dropped + 1
+    record(cache.failures, 'failures', failure_key, 30000)
+    return
+  end
+  publish_chunk(e, first, chunk, priorities)
+end
+
+local function collect()
+  local wins = vim.api.nvim_tabpage_list_wins(0)
+  local focused = vim.api.nvim_get_current_win()
+  table.sort(wins, function(a, b)
+    if a == focused or b == focused then
+      return a == focused
+    end
+    return a < b
+  end)
+  local visible = {}
+  for _, win in ipairs(wins) do
+    local s = sessions.by_buf[vim.api.nvim_win_get_buf(win)]
+    if
+      sessions.owns(s)
+      and s.config.syntax_highlighting
+      and not s.layout_invalid
+      and #visible < limits.demands
+    then
+      visible[#visible + 1] = win
+    end
+  end
+  local wanted = {}
+  for _, win in ipairs(visible) do
+    wanted[win] = true
+  end
+  for win in pairs(viewport.demands) do
+    if not wanted[win] then
+      drop_demand(win)
+    end
+  end
+  local remaining = limits.rows
+  for index, win in ipairs(visible) do
+    local s = sessions.by_buf[vim.api.nvim_win_get_buf(win)]
+    local first, last
+    vim.api.nvim_win_call(win, function()
+      first, last = vim.fn.line('w0') - 1, vim.fn.line('w$')
+    end)
+    local quota = math.floor(remaining / (#visible - index + 1))
+    if index == 1 and #visible > 1 then
+      quota = math.min(128, remaining - 16 * (#visible - 1))
+    end
+    last = math.min(last, first + quota)
+    remaining = remaining - (last - first)
+    local old = viewport.demands[win]
+    if
+      not old
+      or old.first ~= first
+      or old.last ~= last
+      or old.focused ~= (win == focused)
+      or not valid(old)
+    then
+      drop_demand(win)
+      viewport.serial = viewport.serial + 1
+      if reserve(512) then
+        viewport.demands[win] = {
+          win = win,
+          focused = win == focused,
+          id = s.id,
+          generation = s.generation,
+          layout = s.layout_revision,
+          first = first,
+          last = last,
+          maps = {},
+          rows = 0,
+          bytes = 512,
+          serial = viewport.serial,
+          mapped = false,
+          done = false,
+          next_map = 1,
+          next_line = 0,
+        }
+        count('demands', 1)
+      end
+    end
+  end
+  trim_spans()
+  schedule_worker()
+end
+
+function M.request()
+  if viewport.timer then
+    viewport.timer:stop()
+    viewport.timer:close()
+  end
+  local current = vim.uv.new_timer()
+  viewport.timer = current
+  current:start(
+    30,
+    0,
+    vim.schedule_wrap(function()
+      if viewport.timer ~= current then
+        return
+      end
+      current:close()
+      viewport.timer = nil
+      collect()
+    end)
+  )
+end
+
+local function choose_demand()
+  local focused, chosen = vim.api.nvim_get_current_win(), nil
+  for win, d in pairs(viewport.demands) do
+    if not valid(d) then
+      drop_demand(win)
+    elseif
+      not d.done and (not chosen or win == focused or (chosen.win ~= focused and win < chosen.win))
+    then
+      chosen = d
+    end
+  end
+  return chosen
+end
+
+local function map_demand(s, d, started)
+  if not d.mapper then
+    -- Bound and account for temporary sorting/layout arrays before deriving mappings.
+    local scratch = #s.results * 64 + limits.rows * 64
+    if not reserve(scratch) then
+      d.done = true
+      schedule_worker()
+      return
+    end
+    d.scratch = scratch
+    d.mapper = coroutine.create(function()
+      local previous_snapshot, key
+      results.mappings(s, d.first, d.last, function(row, snapshot, line, col, length)
+        if
+          counters.rows >= limits.rows
+          or length > limits.line_bytes
+          or #snapshot.text > limits.source_bytes
+        then
+          return
+        end
+        if previous_snapshot ~= snapshot then
+          previous_snapshot = snapshot
+          local failure_key = snapshot.hash .. ':filetype'
+          local ok, lang = false, nil
+          if not suppressed(cache.failures, failure_key) then
+            ok, lang = pcall(adapter.language, snapshot)
+            if not ok then
+              record(cache.failures, 'failures', failure_key, 30000)
+            end
+          end
+          key = ok and type(lang) == 'string' and #lang <= 128 and snapshot.hash .. ':' .. lang
+            or nil
+        end
+        if not key then
+          return
+        end
+        local n, cost = #d.maps, 32
+        local extend = n > 0
+          and d.maps[n] == key
+          and d.maps[n - 3] == col
+          and d.maps[n - 5] + #d.maps[n - 2] == row
+          and d.maps[n - 4] + #d.maps[n - 2] == line
+        if not extend then
+          cost = cost + 256 + #snapshot.path + #key
+        end
+        if (extend or counters.blocks < limits.blocks) and reserve(cost) then
+          if extend then
+            local lengths = d.maps[n - 2]
+            lengths[#lengths + 1] = length
+          else
+            d.maps[n + 1], d.maps[n + 2], d.maps[n + 3], d.maps[n + 4], d.maps[n + 5], d.maps[n + 6] =
+              row, line, col, { length }, snapshot.path, key
+            count('blocks', 1)
+          end
+          d.bytes, d.rows = d.bytes + cost, d.rows + 1
+          count('rows', 1)
+        end
+      end, function()
+        if now() - d.batch_started >= limits.batch_ms then
+          coroutine.yield()
+        end
+      end)
+    end)
+  end
+  -- Resume with a fresh cooperative deadline.
+  d.batch_started = started
+  local ok = coroutine.resume(d.mapper)
+  if not ok or coroutine.status(d.mapper) == 'dead' then
+    release_mapper(d)
+    d.mapped = true
+  end
+  counters.max_batch_ms = math.max(counters.max_batch_ms, now() - started)
+  schedule_worker()
+end
+
+local function enrich_demand(s, d, started)
+  while d.next_map <= #d.maps do
+    local i = d.next_map
+    local snapshot = s.snapshots[d.maps[i + 4]]
+    local key = d.maps[i + 5]
+    local e = cache.entries[key]
+    local first = d.maps[i + 1] + d.next_line
+    if
+      snapshot
+      and not suppressed(cache.failures, key)
+      and not suppressed(cache.failures, key .. ':' .. first)
+    then
+      local chunk, chunk_start
+      if e then
+        chunk, chunk_start = chunk_for(e, first)
+      end
+      if chunk then
+        e.used = tick()
+        d.next_line = math.min(#d.maps[i + 3], chunk_start + chunk.lines - d.maps[i + 1])
+      else
+        e = admit(snapshot, key:sub(66), key)
+        if progress.busy then
+          return
+        end
+        if e and e.tree then
+          local last = math.min(d.maps[i + 1] + #d.maps[i + 3] - 1, first + limits.chunk_lines - 1)
+          for cached in pairs(e.chunks) do
+            if cached > first then
+              last = math.min(last, cached - 1)
+            end
+          end
+          trim_spans()
+          extract(e, snapshot, first, last)
+          d.next_line = last - d.maps[i + 1] + 1
+          if d.next_line >= #d.maps[i + 3] then
+            d.next_map, d.next_line = i + MAP_WIDTH, 0
+          end
+          schedule_worker()
+          return
+        else
+          d.next_line = #d.maps[i + 3]
+        end
+      end
+    else
+      d.next_line = #d.maps[i + 3]
+    end
+    if d.next_line >= #d.maps[i + 3] then
+      d.next_map, d.next_line = i + MAP_WIDTH, 0
+    end
+    if now() - started > limits.batch_ms then
+      schedule_worker()
+      return
+    end
+  end
+  d.done = true
+  redraw()
+  schedule_worker()
+end
+
+worker = function()
+  if progress.busy then
+    return
+  end
+  local d = choose_demand()
+  if not d then
+    return
+  end
+  local started, s = now(), sessions.by_id[d.id]
+  local info = vim.fn.getwininfo(d.win)[1]
+  if not info or info.topline - 1 ~= d.first then
+    drop_demand(d.win)
+    M.request()
+    schedule_worker()
+    return
+  end
+  if not d.mapped then
+    map_demand(s, d, started)
+  else
+    enrich_demand(s, d, started)
+  end
+end
+
+function M.invalidate(s)
+  drop_demands(s.id)
+  redraw()
+  M.request()
+end
+function M.layout_changed(s)
+  if s.layout_changed then
+    s.layout_changed = nil
+    M.invalidate(s)
+  end
+end
+function M.detach(s)
+  M.invalidate(s)
+  trim_spans()
+end
+function M.reload()
+  cache.revision = cache.revision + 1
+  drop_demands()
+  for _, e in pairs(cache.entries) do
+    clear_chunks(e)
+    local ok, query = pcall(adapter.query, e.lang)
+    e.query = ok and query or nil
+    if not e.query and not e.active then
+      evict(e.key)
+    end
+  end
+  clear_records(cache.failures, 'failures')
+  clear_records(cache.missing, 'missing')
+  redraw()
+  M.request()
+end
+function M.diagnostics()
+  local copy = vim.deepcopy(counters)
+  copy.limits, copy.busy, copy.query_revision = vim.deepcopy(limits), progress.busy, cache.revision
+  copy.high_water = vim.deepcopy(high_water)
+  return copy
+end
+
+local function runtime_queries_changed()
+  if not progress.reload_pending then
+    progress.reload_pending = true
+    -- Neovim's query-cache OptionSet handler may have been registered after ours.
+    vim.schedule(function()
+      progress.reload_pending = false
+      M.reload()
+    end)
+  end
+end
+local function draw_win(_, win, buf, first, last)
+  local s = sessions.by_buf[buf]
+  if not s or not s.config.syntax_highlighting then
+    return false
+  end
+  local d = viewport.demands[win]
+  if not d or not valid(d) or d.first ~= first or d.last < math.min(last, first + 16) then
+    -- One debounce request, never a closure retaining the session or snapshot.
+    if not viewport.timer then
+      request_from_redraw()
+    end
+  end
+  return d and valid(d) or false
+end
+
+local function draw_line(_, win, buf, row)
+  local d = viewport.demands[win]
+  if not d or not valid(d) then
+    return
+  end
+  for i = 1, #d.maps, MAP_WIDTH do
+    local offset = row - d.maps[i]
+    if offset >= 0 and offset < #d.maps[i + 3] then
+      local line, col, length = d.maps[i + 1] + offset, d.maps[i + 2], d.maps[i + 3][offset + 1]
+      local e = cache.entries[d.maps[i + 5]]
+      local chunk = e and chunk_for(e, line)
+      if chunk then
+        local spans = chunk.spans
+        for j = 1, #spans, SPAN_WIDTH do
+          if spans[j] == line then
+            local left, right = math.min(length, spans[j + 1]), math.min(length, spans[j + 2])
+            if right > left then
+              vim.api.nvim_buf_set_extmark(buf, M.namespace, row, col + left, {
+                end_col = col + right,
+                hl_group = cache.groups[spans[j + 3]],
+                priority = spans[j + 4],
+                ephemeral = true,
+                strict = false,
+              })
+            end
+          end
+        end
+      end
+      break
+    end
+  end
+end
+
+function M.attach(s)
+  if not s.config.syntax_highlighting then
+    return
+  end
+  if not progress.initialized then
+    progress.initialized = true
+    vim.api.nvim_set_decoration_provider(M.namespace, {
+      on_win = draw_win,
+      on_line = draw_line,
+    })
+    local group = vim.api.nvim_create_augroup('SearchlightSyntax', { clear = true })
+    vim.api.nvim_create_autocmd(
+      { 'WinScrolled', 'WinResized', 'WinEnter', 'BufWinEnter', 'BufWinLeave', 'TabEnter' },
+      {
+        group = group,
+        callback = M.request,
+      }
+    )
+    vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = redraw })
+    vim.api.nvim_create_autocmd({ 'FileType', 'OptionSet' }, {
+      group = group,
+      pattern = '*',
+      callback = function(event)
+        if event.event == 'FileType' or event.match == 'filetype' then
+          for _, session in pairs(sessions.by_id) do
+            M.invalidate(session)
+          end
+        elseif event.match == 'runtimepath' then
+          runtime_queries_changed()
+        end
+      end,
+    })
+    vim.api.nvim_create_autocmd(
+      'User',
+      { group = group, pattern = 'SearchlightHighlightReload', callback = M.reload }
+    )
+  end
+  M.request()
+end
+
+-- Deterministic adapters/cleanup are deliberately test-only. Diagnostics returns copies.
+M._test = {
+  reset = function(replacement, overrides)
+    assert(not progress.busy, 'cannot reset an in-flight parser')
+    drop_demands()
+    for key in pairs(cache.entries) do
+      evict(key)
+    end
+    clear_records(cache.failures, 'failures')
+    clear_records(cache.missing, 'missing')
+    for lang in pairs(cache.languages) do
+      release_language(lang)
+    end
+    release_groups()
+    high_water = {}
+    limits = vim.deepcopy(default_limits)
+    for name, value in pairs(overrides or {}) do
+      assert(
+        default_limits[name] and value > 0 and value <= default_limits[name],
+        'test budgets may only shrink'
+      )
+      limits[name] = value
+    end
+    adapter = replacement and vim.tbl_extend('force', default_adapter, replacement)
+      or default_adapter
+  end,
+  collect = collect,
+  demands = function()
+    return vim.deepcopy(viewport.demands)
+  end,
+  entries = function()
+    local copy = {}
+    for key, e in pairs(cache.entries) do
+      copy[key] = { lang = e.lang, chunks = vim.deepcopy(e.chunks), active = e.active }
+    end
+    return copy
+  end,
+}
+return M

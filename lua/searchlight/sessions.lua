@@ -1,0 +1,157 @@
+local input = require('searchlight.input')
+local M = {
+  by_id = {},
+  by_buf = {},
+  next_id = 0,
+  last = nil,
+  option_settings = input.option_settings,
+}
+local panel_options = {
+  wrap = false,
+  number = false,
+  relativenumber = false,
+  signcolumn = 'no',
+  foldmethod = 'manual',
+  -- Zero-width matches at end of line need a cursor position after the last byte.
+  virtualedit = 'onemore',
+}
+local editor_options = {}
+
+function M.editor_options(win)
+  win = win == 0 and vim.api.nvim_get_current_win() or win
+  if editor_options[win] then
+    return vim.deepcopy(editor_options[win])
+  end
+  local options = {}
+  for name in pairs(panel_options) do
+    options[name] = vim.api.nvim_get_option_value(name, { win = win, scope = 'local' })
+  end
+  return options
+end
+
+function M.restore_editor_options(win, options)
+  for name, value in pairs(options or editor_options[win] or {}) do
+    vim.api.nvim_set_option_value(name, value, { win = win, scope = 'local' })
+  end
+  editor_options[win] = nil
+end
+
+local window_group = vim.api.nvim_create_augroup('SearchlightPanelOptions', { clear = true })
+vim.api.nvim_create_autocmd('BufLeave', {
+  group = window_group,
+  callback = function(event)
+    local win = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_get_buf(win) == event.buf then
+      M.restore_editor_options(win)
+    end
+  end,
+})
+vim.api.nvim_create_autocmd('WinClosed', {
+  group = window_group,
+  callback = function(event)
+    editor_options[tonumber(event.match)] = nil
+  end,
+})
+M.valid_context_size = input.valid_context_size
+
+function M.owns(s)
+  return s and M.by_id[s.id] == s and not s.disposed and vim.api.nvim_buf_is_valid(s.buf)
+end
+function M.get(id)
+  if type(id) == 'table' then
+    return M.owns(id) and id or nil
+  end
+  if id then
+    return M.by_id[tonumber(id)]
+  end
+  return M.by_buf[vim.api.nvim_get_current_buf()]
+end
+function M.create(root, config)
+  M.next_id = M.next_id + 1
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.bo[buf].buftype, vim.bo[buf].bufhidden = 'nofile', 'hide'
+  vim.bo[buf].swapfile, vim.bo[buf].filetype = false, 'searchlight'
+  vim.api.nvim_buf_set_name(buf, 'searchlight://' .. M.next_id)
+  local options = input.options(config)
+  local s = {
+    id = M.next_id,
+    buf = buf,
+    root = root,
+    fields = { query = '', replacement = '', include = {}, exclude = {} },
+    options = options,
+    sections = { replace = true, filters = true },
+    results = {},
+    selected = nil,
+    generation = 0,
+    jobs = {},
+    pending_jobs = {},
+    status = 'empty',
+    config = vim.deepcopy(config),
+    exclusions = {},
+    regions = {},
+    result_rows = {},
+    collapsed_paths = {},
+    snapshots = {},
+    report = nil,
+  }
+  M.by_id[s.id], M.by_buf[buf], M.last = s, s, s.id
+  return s
+end
+function M.dispose(s)
+  if not s or s.disposed then
+    return
+  end
+  s.disposed = true
+  M.by_id[s.id], M.by_buf[s.buf] = nil, nil
+  require('searchlight.highlight').detach(s)
+  require('searchlight.search').cancel(s)
+  if M.last == s.id then
+    M.last = nil
+    for id in pairs(M.by_id) do
+      if not M.last or id > M.last then
+        M.last = id
+      end
+    end
+  end
+end
+function M.focus(s)
+  if not M.owns(s) then
+    return
+  end
+  local current_tab = vim.api.nvim_get_current_tabpage()
+  local chosen
+  for _, win in ipairs(vim.fn.win_findbuf(s.buf)) do
+    chosen = win
+    if vim.api.nvim_win_get_tabpage(win) == current_tab then
+      break
+    end
+  end
+  if chosen then
+    vim.api.nvim_set_current_tabpage(vim.api.nvim_win_get_tabpage(chosen))
+    vim.api.nvim_set_current_win(chosen)
+  else
+    local options = M.editor_options(vim.api.nvim_get_current_win())
+    local buf = vim.api.nvim_get_current_buf()
+    local empty_editor = #vim.api.nvim_tabpage_list_wins(current_tab) == 1
+      and vim.api.nvim_win_get_config(0).relative == ''
+      and vim.bo[buf].buftype == ''
+      and vim.api.nvim_buf_get_name(buf) == ''
+      and not vim.bo[buf].modified
+      and vim.api.nvim_buf_line_count(buf) == 1
+      and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ''
+    -- The empty startup editor has no content or layout to preserve.
+    if not empty_editor then
+      vim.cmd('topleft split')
+    end
+    vim.api.nvim_win_set_buf(0, s.buf)
+    editor_options[vim.api.nvim_get_current_win()] = options
+  end
+  local win = vim.api.nvim_get_current_win()
+  editor_options[win] = editor_options[win] or M.editor_options(win)
+  for name, value in pairs(panel_options) do
+    vim.api.nvim_set_option_value(name, value, { win = win, scope = 'local' })
+  end
+  M.last = s.id
+  require('searchlight.highlight').request()
+end
+return M

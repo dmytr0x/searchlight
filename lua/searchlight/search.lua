@@ -1,0 +1,597 @@
+local results = require('searchlight.results')
+local sessions = require('searchlight.sessions')
+local rg = require('searchlight.rg')
+local scope = require('searchlight.scope')
+local sources = require('searchlight.sources')
+local process = require('searchlight.process')
+local M = {}
+
+local function current(s, gen)
+  return sessions.owns(s) and s.generation == gen
+end
+local function render(s)
+  require('searchlight.view').request_render(s)
+end
+
+local function transition(s, status, message)
+  s.status, s.message = status, message
+end
+
+local function cancel_group(group)
+  for _, record in pairs(group.jobs) do
+    record.cancelled = true
+    if record.handle then
+      pcall(record.handle.kill, record.handle, 15)
+    end
+  end
+end
+
+function M.cancel(s)
+  require('searchlight.highlight').invalidate(s)
+  if s.timer then
+    s.timer:stop()
+    s.timer:close()
+    s.timer = nil
+  end
+  if s.job_group then
+    cancel_group(s.job_group)
+    s.job_group = nil
+  end
+  s.jobs = {}
+end
+
+function M.invalidate(s, reason, launch)
+  if not sessions.owns(s) then
+    return
+  end
+  s.generation = s.generation + 1
+  M.cancel(s)
+  for _, r in ipairs(s.results) do
+    r.stale = true
+  end
+  transition(s, s.fields.query == '' and 'empty' or (launch == false and 'stale' or 'waiting'), reason)
+  if s.fields.query == '' then
+    s.results, s.selected, s.snapshots = {}, nil, {}
+  end
+  render(s)
+  if launch ~= false and s.fields.query ~= '' then
+    local gen = s.generation
+    s.timer = vim.uv.new_timer()
+    s.timer:start(
+      s.config.debounce_ms,
+      0,
+      vim.schedule_wrap(function()
+        if current(s, gen) then
+          s.timer:close()
+          s.timer = nil
+          M.launch(s, gen)
+        end
+      end)
+    )
+  end
+end
+
+local function fail(s, gen, message)
+  if not current(s, gen) then
+    return
+  end
+  M.cancel(s)
+  transition(s, 'error', message)
+  for _, result in ipairs(s.results) do
+    result.stale = true
+  end
+  render(s)
+end
+
+-- A group owns accepting jobs; the session owns all unsettled handles, including
+-- older cancelled generations. Cancellation never releases pending ownership.
+local function job_group(s, gen)
+  if not s.job_group then
+    s.job_group = {
+      session = s,
+      generation = gen,
+      jobs = s.jobs,
+      pending = s.pending_jobs,
+      output_limit = s.config.max_output_bytes,
+    }
+  end
+  return s.job_group
+end
+
+-- Stream callbacks may arrive on a libuv thread. Reserve queued bytes before
+-- scheduling delivery, and mutate domain models only on the main loop.
+local function start_job(group, argv, opts, chunk, done, cleanup)
+  local s, gen = group.session, group.generation
+  local record = { queued = 0, stderr = '', cancelled = false, finishing = false }
+  group.jobs[record], group.pending[record] = record, record
+  local function finalize(out, start_error)
+    if record.settled then
+      return
+    end
+    record.settled = true
+    group.jobs[record], group.pending[record] = nil, nil
+    if cleanup then
+      cleanup()
+    end
+    if current(s, gen) and not record.cancelled then
+      if start_error then
+        fail(s, gen, tostring(start_error))
+      else
+        done(out, record.stderr)
+      end
+    end
+  end
+  local function finish(out)
+    if record.finishing then
+      return
+    end
+    record.finishing = true
+    vim.schedule(function()
+      finalize(out)
+    end)
+  end
+  opts.stdout = function(err, data)
+    if record.cancelled or record.finishing then
+      return
+    end
+    if err then
+      vim.schedule(function()
+        fail(s, gen, tostring(err))
+      end)
+      return
+    end
+    if not data then
+      return
+    end
+    record.queued = record.queued + #data
+    if record.queued > group.output_limit then
+      record.cancelled = true
+      if record.handle then
+        pcall(record.handle.kill, record.handle, 15)
+      end
+      vim.schedule(function()
+        fail(s, gen, 'Process output exceeds queued byte limit')
+      end)
+      return
+    end
+    vim.schedule(function()
+      record.queued = record.queued - #data
+      if current(s, gen) and not record.cancelled then
+        local ok, error_message = pcall(chunk, data)
+        if not ok then
+          fail(s, gen, tostring(error_message))
+        end
+      end
+    end)
+  end
+  opts.stderr = function(err, data)
+    if not record.cancelled and not record.finishing then
+      record.stderr = (record.stderr .. (data or tostring(err or ''))):sub(1, 8192)
+    end
+  end
+  local ok, handle = pcall(process.start, argv, opts, finish)
+  if not ok then
+    record.finishing = true
+    finalize(nil, handle)
+    return
+  end
+  record.handle = handle
+  if record.cancelled then
+    pcall(handle.kill, handle, 15)
+  end
+  return record
+end
+
+-- Session observations stay compatible; the run owns request/phase state and is
+-- captured only by its jobs. Domain callbacks never read mutable input mid-run.
+local function prepare_run(s, gen)
+  local request = { root = s.root, fields = vim.deepcopy(s.fields),
+    options = vim.deepcopy(s.options), config = vim.deepcopy(s.config) }
+  if request.fields.query:find('[\r\n]') or request.fields.replacement:find('[\r\n]') then
+    fail(s, gen, 'Search and Replace each accept one logical line')
+    return
+  end
+  local cap = rg.probe()
+  if not cap.search then
+    fail(s, gen, cap.reason)
+    return
+  end
+  local config_error = rg.config_error(request.options.ignored)
+  if config_error then
+    fail(s, gen, config_error)
+    return
+  end
+  local ok, argv = pcall(rg.inventory, request)
+  if not ok then
+    fail(s, gen, tostring(argv))
+    return
+  end
+  local stat = vim.uv.fs_stat(request.root)
+  if not stat or stat.type ~= 'directory' then
+    fail(s, gen, 'Search root is not a directory: ' .. request.root)
+    return
+  end
+  local buffers_ok, buffers = pcall(scope.buffers, request.root)
+  if not buffers_ok then
+    fail(s, gen, tostring(buffers))
+    return
+  end
+  local inventory = { eligible = {}, identities = {}, preferred = {}, count = 0, carry = '' }
+  for _, buffer in ipairs(buffers) do
+    inventory.preferred[scope.identity(buffer.path)] = buffer.path
+  end
+  return { session = s, generation = gen, request = request, argv = argv, match_argv = rg.match(request),
+    buffers = buffers, inventory = inventory, group = job_group(s, gen),
+    queue = {}, next_source = 1, active = 0, previous_exclusions = s.exclusions,
+    exclusions = {}, snapshot_bytes = 0 }
+end
+
+local function decode_inventory(run, data)
+  local inventory, request = run.inventory, run.request
+  inventory.carry = inventory.carry .. data
+  if #inventory.carry > request.config.max_output_bytes then
+    error('Inventory exceeds queue byte limit')
+  end
+  while true do
+    local pos = inventory.carry:find('\0', 1, true)
+    if not pos then
+      break
+    end
+    local rel = inventory.carry:sub(1, pos - 1):gsub('^%./', '')
+    inventory.carry = inventory.carry:sub(pos + 1)
+    local path = scope.path(request.root .. '/' .. rel)
+    local identity = scope.identity(path)
+    path = inventory.preferred[identity] or path
+    if
+      scope.contains(request.root, path)
+      and not scope.metadata(request.root, path)
+      and not inventory.identities[identity]
+    then
+      inventory.identities[identity] = true
+      inventory.eligible[path] = true
+      inventory.count = inventory.count + 1
+      if inventory.count > request.config.max_files then
+        error('File inventory cap reached; increase max_files and refresh')
+      end
+    end
+  end
+end
+
+local function select_sources(run)
+  local by_path, queue = {}, {}
+  for _, b in ipairs(run.buffers) do
+    if run.inventory.eligible[b.path] then
+      by_path[b.path] = b.buf
+    end
+  end
+  for path in pairs(run.inventory.eligible) do
+    if not run.request.options.open or by_path[path] then
+      table.insert(queue, { path = path, buf = by_path[path] })
+    end
+  end
+  table.sort(queue, function(a, b)
+    return a.path < b.path
+  end)
+  run.queue = queue
+end
+
+local function finalize_run(run)
+  local s, gen = run.session, run.generation
+  if not current(s, gen) or s.status ~= 'searching' then
+    return
+  end
+  local reset_count = 0
+  for id in pairs(run.previous_exclusions) do
+    if not run.exclusions[id] then
+      reset_count = reset_count + 1
+    end
+  end
+  s.exclusions = run.exclusions
+  results.order(s)
+  transition(s, s.incomplete and 'truncated' or 'complete', s.message)
+  if reset_count > 0 then
+    s.message = (s.message or '') .. ' Exclusions reset for changed snapshots: ' .. reset_count
+  end
+  render(s)
+end
+
+local function accept_record(run, match, item)
+  local s, gen, snap = run.session, run.generation, match.snapshot
+  if s.status ~= 'searching' then
+    return
+  end
+  if item.type == 'context' then
+    local line = item.data.line_number
+    local text = rg.value(item.data.lines)
+    if text and snap.lines[line] == text:gsub('\n$', '') then
+      snap.context_lines[line] = snap.lines[line]
+      render(s)
+    end
+    return
+  end
+  if item.type ~= 'match' then
+    return
+  end
+  match.has_matches = true
+  local line = item.data.line_number
+  for _, submatch in ipairs(item.data.submatches) do
+    if #s.results >= run.request.config.max_results then
+      s.incomplete = true
+      transition(s, 'truncated', 'Match cap reached; increase max_results and refresh for Replace all')
+      M.cancel(s)
+      results.order(s)
+      render(s)
+      return
+    end
+    local start, stop = submatch.start, submatch['end']
+    local matched = rg.value(submatch.match)
+    if not snap.lines[line] or snap.lines[line]:sub(start + 1, stop) ~= matched then
+      error('ripgrep range does not map to decoded source snapshot: ' .. match.candidate.path)
+    end
+    local id = match.candidate.path
+      .. ':'
+      .. snap.hash
+      .. ':'
+      .. line
+      .. ':'
+      .. start
+      .. ':'
+      .. stop
+    local enabled = not run.previous_exclusions[id]
+    if not enabled then
+      run.exclusions[id] = true
+    end
+    table.insert(s.results, {
+      id = id,
+      path = match.candidate.path,
+      snapshot = snap,
+      buf = snap.buf,
+      line = line,
+      start = start,
+      finish = stop,
+      match = matched,
+      replacement = rg.value(submatch.replacement),
+      enabled = enabled,
+      stale = false,
+      generation = gen,
+      context = snap.lines[line],
+      context_size = run.request.options.context,
+    })
+  end
+  render(s)
+end
+
+-- The run accounts admitted text; the session value is its compatibility observation.
+local function account_snapshots(run, delta)
+  run.snapshot_bytes = run.snapshot_bytes + delta
+  run.session.snapshot_bytes = run.snapshot_bytes
+end
+
+local pump_sources
+local function finish_match(run, match, out, stderr)
+  local s, gen, snap = run.session, run.generation, match.snapshot
+  local decoder = match.decoder
+  local decoded, decode_err = pcall(decoder, '', true)
+  if not decoded then
+    fail(s, gen, tostring(decode_err))
+    return
+  end
+  if out.code ~= 0 and out.code ~= 1 then
+    fail(s, gen, stderr ~= '' and stderr or 'ripgrep exited ' .. out.code)
+    return
+  end
+  if
+    snap.buf
+    and (
+      not vim.api.nvim_buf_is_valid(snap.buf)
+      or vim.api.nvim_buf_get_changedtick(snap.buf) ~= snap.tick
+    )
+  then
+    M.invalidate(s, 'Source changed during search', false)
+    return
+  end
+  run.active = run.active - 1
+  if not match.has_matches then
+    account_snapshots(run, -#snap.text)
+    -- Keep physical identity for cross-root aliases with zero hits,
+    -- without retaining the complete contents of every scanned file.
+    snap.text, snap.lines = nil, nil
+  end
+  pump_sources(run)
+end
+
+local function start_matching(run, candidate, snap)
+  local match = { candidate = candidate, snapshot = snap, has_matches = false }
+  run.active = run.active + 1
+  match.decoder = rg.decoder(function(item)
+    accept_record(run, match, item)
+  end, run.request.config.max_output_bytes)
+  start_job(run.group, run.match_argv, { cwd = run.request.root, stdin = snap.text }, function(data)
+    match.decoder(data, false)
+  end, function(out, stderr)
+    finish_match(run, match, out, stderr)
+  end)
+end
+
+local function capture_snapshot(run, candidate)
+  local prefer_disk = not run.request.options.open
+    and candidate.buf
+    and not vim.bo[candidate.buf].modified
+    and vim.uv.fs_stat(candidate.path) ~= nil
+  local snap, err =
+    sources.capture(candidate.path, candidate.buf, run.request.config.max_source_bytes, prefer_disk)
+  if snap and run.snapshot_bytes + #snap.text > run.request.config.max_snapshot_bytes then
+    if run.active > 0 then
+      -- Retry after active sources have a chance to release no-hit snapshots.
+      return nil, nil, true
+    end
+    snap, err =
+      nil, 'session snapshot byte budget reached; increase max_snapshot_bytes and refresh'
+  end
+  return snap, err
+end
+
+pump_sources = function(run)
+  local s, gen = run.session, run.generation
+  if not current(s, gen) or s.status ~= 'searching' then
+    return
+  end
+  local examined = 0
+  while run.active < run.request.config.concurrency and run.next_source <= #run.queue do
+    if examined >= 50 then
+      vim.schedule(function() pump_sources(run) end)
+      return
+    end
+    examined = examined + 1
+    local candidate = run.queue[run.next_source]
+    run.next_source = run.next_source + 1
+    local snap, err, retry = capture_snapshot(run, candidate)
+    if retry then
+      run.next_source = run.next_source - 1
+      return
+    end
+    if not snap then
+      if err ~= 'binary source (NUL bytes)' then
+        s.incomplete = true
+        s.message = (s.message or '') .. ' Skipped ' .. candidate.path .. ': ' .. tostring(err)
+      end
+    else
+      snap.context_lines = {}
+      s.snapshots[candidate.path] = snap
+      account_snapshots(run, #snap.text)
+      start_matching(run, candidate, snap)
+      if s.status ~= 'searching' then
+        return
+      end
+    end
+  end
+  if run.active == 0 and run.next_source > #run.queue then
+    finalize_run(run)
+  end
+end
+
+local function begin_matching(run)
+  local s, gen = run.session, run.generation
+  if not current(s, gen) then
+    return
+  end
+  select_sources(run)
+  if #run.queue == 0 then
+    -- Compile even with no eligible sources; empty scopes must report invalid regex.
+    start_job(run.group, run.match_argv, { cwd = run.request.root, stdin = '' }, function() end,
+      function(out, stderr)
+        if out.code ~= 0 and out.code ~= 1 then
+          fail(s, gen, stderr ~= '' and stderr or 'Query validation failed')
+        else
+          finalize_run(run)
+        end
+      end)
+  else
+    pump_sources(run)
+  end
+end
+
+local function check_new_names(run)
+  local s, gen = run.session, run.generation
+  local candidates = {}
+  for _, b in ipairs(run.buffers) do
+    if not vim.uv.fs_stat(b.path) then
+      table.insert(candidates, b)
+    end
+  end
+  if #candidates == 0 then
+    begin_matching(run)
+    return
+  end
+  local shadow_ok, shadow = pcall(scope.shadow, run.request.root, candidates)
+  if not shadow_ok then
+    fail(s, gen, tostring(shadow))
+    return
+  end
+  start_job(run.group, run.argv, { cwd = shadow.cwd }, function(data) decode_inventory(run, data) end, function(shadow_out, shadow_stderr)
+    if shadow_out.code ~= 0 and shadow_out.code ~= 1 then
+      fail(s, gen, shadow_stderr)
+      return
+    end
+    if run.inventory.carry ~= '' then
+      fail(s, gen, 'Unterminated new-buffer inventory')
+      return
+    end
+    begin_matching(run)
+  end, function()
+    scope.cleanup(shadow)
+  end)
+end
+
+local function collect_inventory(run)
+  local s, gen = run.session, run.generation
+  start_job(run.group, run.argv, { cwd = run.request.root }, function(data)
+    decode_inventory(run, data)
+  end, function(out, stderr)
+    if out.code ~= 0 and out.code ~= 1 then
+      fail(s, gen, stderr ~= '' and stderr or 'File inventory failed')
+    elseif run.inventory.carry ~= '' then
+      fail(s, gen, 'Unterminated ripgrep inventory')
+    else
+      check_new_names(run)
+    end
+  end)
+end
+
+function M.launch(s, gen)
+  if not current(s, gen) or s.fields.query == '' then
+    return
+  end
+  require('searchlight')._synchronize(s, 'launch')
+  if not current(s, gen) or s.fields.query == '' then
+    return
+  end
+  local run = prepare_run(s, gen)
+  if not run then
+    return
+  end
+  s.results, s.snapshots = {}, {}
+  transition(s, 'searching', rg.probe().reason)
+  account_snapshots(run, 0)
+  s.incomplete = false
+  render(s)
+  collect_inventory(run)
+end
+
+function M.refresh(s)
+  M.invalidate(s)
+  if s.timer then
+    s.timer:stop()
+    s.timer:close()
+    s.timer = nil
+  end
+  M.launch(s, s.generation)
+end
+
+function M.source_changed(path, launch, generations)
+  -- Observe source edits for safety, but searching is an explicit panel action.
+  launch = launch == true
+  path = scope.path(path)
+  local identities = { [scope.identity(path)] = true }
+  for _, s in pairs(sessions.by_id) do
+    local snap = s.snapshots[path]
+    if snap and snap.disk.exists then
+      identities['file:' .. snap.disk.dev .. ':' .. snap.disk.ino] = true
+    end
+  end
+  for _, s in pairs(sessions.by_id) do
+    local affected = scope.contains(s.root, path)
+    if not affected then
+      for _, snap in pairs(s.snapshots) do
+        if snap.disk.exists and identities['file:' .. snap.disk.dev .. ':' .. snap.disk.ino] then
+          affected = true
+          break
+        end
+      end
+    end
+    if affected and (not generations or generations[s.id] == s.generation) then
+      M.invalidate(s, 'Source changed: ' .. path, launch)
+    end
+  end
+end
+return M
