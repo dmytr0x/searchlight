@@ -54,6 +54,48 @@ vim.api.nvim_create_autocmd('WinClosed', {
 })
 M.valid_context_size = input.valid_context_size
 
+local function panel_name(id, query)
+  local label = (query or ''):gsub('[%c/\\#%%|"]', '_')
+  if vim.fn.strchars(label) > 40 then
+    label = vim.fn.strcharpart(label, 0, 40) .. '…'
+  end
+  if label == '' then
+    return 'searchlight://' .. id
+  end
+  return 'searchlight://' .. id .. '/' .. label
+end
+
+local function wipe_panel_name(name, keep)
+  if name == '' then
+    return
+  end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if
+      buf ~= keep
+      and vim.api.nvim_buf_is_valid(buf)
+      and not vim.bo[buf].buflisted
+      and vim.api.nvim_buf_get_name(buf) == name
+    then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
+function M.sync_name(s)
+  if not vim.api.nvim_buf_is_valid(s.buf) then
+    return
+  end
+  local name = panel_name(s.id, s.fields.query)
+  local current = vim.api.nvim_buf_get_name(s.buf)
+  if current == name then
+    return
+  end
+  wipe_panel_name(name, s.buf)
+  if pcall(vim.api.nvim_buf_set_name, s.buf, name) then
+    wipe_panel_name(current, s.buf)
+  end
+end
+
 function M.owns(s)
   return s and M.by_id[s.id] == s and not s.disposed and vim.api.nvim_buf_is_valid(s.buf)
 end
@@ -71,7 +113,6 @@ function M.create(root, config)
   local buf = vim.api.nvim_create_buf(true, false)
   vim.bo[buf].buftype, vim.bo[buf].bufhidden = 'nofile', 'hide'
   vim.bo[buf].swapfile, vim.bo[buf].filetype = false, 'searchlight'
-  vim.api.nvim_buf_set_name(buf, 'searchlight://' .. M.next_id)
   local options = input.options(config)
   local s = {
     id = M.next_id,
@@ -95,6 +136,7 @@ function M.create(root, config)
     report = nil,
   }
   M.by_id[s.id], M.by_buf[buf], M.last = s, s, s.id
+  M.sync_name(s)
   return s
 end
 function M.dispose(s)

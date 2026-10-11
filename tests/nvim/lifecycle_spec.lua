@@ -95,6 +95,30 @@ H.test('every New Search creates a uniquely named listed nofile top split', 'S-0
   assert(vim.api.nvim_win_get_position(first)[1] > 0)
   assert(vim.api.nvim_win_get_position(editor)[1] > vim.api.nvim_win_get_position(first)[1])
 end)
+H.test('listed panel names include the search term and stay unique', 'S-01,S-02', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc xyz\n')
+  local sa = H.search(a, { query = 'abc' })
+  local sb = H.search(a, { query = 'xyz' })
+  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id .. '/abc')
+  H.eq(vim.api.nvim_buf_get_name(sb.buf), 'searchlight://' .. sb.id .. '/xyz')
+  H.eq(vim.bo[sa.buf].buftype, 'nofile')
+  H.eq(vim.bo[sa.buf].buflisted, true)
+  local previous = vim.api.nvim_buf_get_name(sa.buf)
+  p.set(sa, { query = 'a/b#c' })
+  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id .. '/a_b_c')
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    assert(not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_buf_get_name(buf) ~= previous)
+  end
+  p.set(sa, { query = string.rep('q', 41) })
+  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id .. '/' .. string.rep('q', 40) .. '…')
+  p.set(sa, { query = '' })
+  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id)
+  p.set(sa, { query = 'abc' })
+  p.action(sa, 'hide')
+  vim.cmd('buffer searchlight://' .. sa.id .. '/abc')
+  H.eq(vim.api.nvim_get_current_buf(), sa.buf)
+end)
 H.test(
   'window closure hides, focus restores, explicit delete disposes only the owner',
   'S-03,S-04',

@@ -79,6 +79,7 @@ function M._synchronize(s, origin, changes)
   elseif changed then
     search.invalidate(s, '', false)
   end
+  sessions.sync_name(s)
   return changed
 end
 

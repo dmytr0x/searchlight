@@ -56,8 +56,10 @@ docs/             Design and validation reports
 
 The root defaults to the invoking window's current directory and stays captured even
 after `:cd`. Escaped spaces work in command arguments. Ordinary window closure hides
-the panel; `:buffer searchlight://ID` also restores it. `:bdelete` and `:bwipeout`
-end its session. Existing global mappings with conflicting keys are preserved.
+the panel; `:buffer searchlight://ID` also restores it. Listed names include the
+current search term (`searchlight://ID/term`) so multiple panels stay distinguishable
+in `:ls` and buffer pickers. `:bdelete` and `:bwipeout` end its session. Existing
+global mappings with conflicting keys are preserved.
 
 If the tab has only an untouched, empty unnamed editor window, search uses that
 window directly. Opening a result then leaves just the search panel and source file.
