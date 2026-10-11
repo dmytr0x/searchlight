@@ -12,6 +12,8 @@ local function register_panel_colors()
   vim.api.nvim_set_hl(panel_colors, 'SearchlightMatch', { link_global = 'Search' })
   vim.api.nvim_set_hl(panel_colors, 'SearchlightSelected', { link_global = 'IncSearch' })
   vim.api.nvim_set_hl(panel_colors, 'SearchlightMarker', { fg = '#98c379', ctermfg = 114 })
+  vim.api.nvim_set_hl(panel_colors, 'SearchlightControl', { fg = '#ffffff', ctermfg = 15 })
+  vim.api.nvim_set_hl(panel_colors, 'SearchlightPath', { fg = '#ffffff', ctermfg = 15 })
   local window_colors = {}
   local color_group = vim.api.nvim_create_augroup('SearchlightPanelColors', { clear = true })
   vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWinEnter', 'WinEnter' }, {
@@ -280,7 +282,7 @@ local function build_layout(s)
         row = 0,
         start = first - 1,
         stop = last,
-        group = s.options[control.option] and 'Boolean' or 'Comment',
+        group = 'SearchlightControl',
       })
     end
   end
@@ -290,7 +292,7 @@ local function build_layout(s)
       row = 0,
       start = context_first - 1,
       stop = context_last,
-      group = 'Number',
+      group = 'SearchlightControl',
     })
   end
   if s.sections.replace then

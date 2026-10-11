@@ -25,6 +25,14 @@ H.test(
       '[Exclude]',
       'generated/**',
     })
+    local heading = lines[1]
+    local controls = {}
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true })) do
+      if mark[2] == 0 and mark[4].hl_group == 'SearchlightControl' then
+        table.insert(controls, heading:sub(mark[3] + 1, mark[4].end_col))
+      end
+    end
+    H.eq(controls, { 'Aa[ ]', 'wd[ ]', '.*[ ]', '󰥩[ ]', '[ ]', '↕[2]' })
     -- Each extmark region contains only editable text, never headers.
     for _, name in ipairs({ 'query', 'replacement', 'include', 'exclude' }) do
       local region = s.regions[name]

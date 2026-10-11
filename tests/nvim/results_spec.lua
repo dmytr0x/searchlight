@@ -29,6 +29,8 @@ H.test('green circle markers follow the cursor without shifting source columns',
   H.eq(filled(), {})
   local colors = vim.api.nvim_get_hl_ns({ winid = vim.api.nvim_get_current_win() })
   H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightMarker' }).fg, 0x98c379)
+  H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightControl' }).fg, 0xffffff)
+  H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightPath' }).fg, 0xffffff)
   local positions = vim.deepcopy(s.result_positions)
   for _, index in ipairs({ 1, 2, 3 }) do
     local position = positions[s.results[index].id]
@@ -213,17 +215,20 @@ H.test(
     H.eq(vim.tbl_count(s.file_rows), 2)
     H.eq(vim.tbl_count(s.result_rows), 3)
     local marks = vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true })
-    local highlighted = {}
+    local highlighted, paths = {}, {}
     for _, mark in ipairs(marks) do
       local details = mark[4]
+      local line = vim.api.nvim_buf_get_lines(s.buf, mark[2], mark[2] + 1, false)[1]
       if
         details.hl_group == 'SearchlightMatch' or details.hl_group == 'SearchlightSelected'
       then
-        local line = vim.api.nvim_buf_get_lines(s.buf, mark[2], mark[2] + 1, false)[1]
         table.insert(highlighted, line:sub(mark[3] + 1, details.end_col))
+      elseif details.hl_group == 'SearchlightPath' then
+        table.insert(paths, line:sub(mark[3] + 1, details.end_col))
       end
     end
     H.eq(highlighted, { 'abc', 'abc', 'abc', 'abc' })
+    H.eq(paths, { 'src/', 'tests/' })
     -- Process callbacks can interleave files before the generation settles.
     s.results = { s.results[4], s.results[2], s.results[3], s.results[1] }
     H.eq(result_lines(s)[1], '▾ one.lua  src/')

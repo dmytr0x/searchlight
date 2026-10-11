@@ -253,7 +253,7 @@ function M.render(s, add, highlights)
         row = header,
         start = #heading + 2,
         stop = #heading + 2 + #directory,
-        group = 'Comment',
+        group = 'SearchlightPath',
       })
     end
     if not collapsed then
