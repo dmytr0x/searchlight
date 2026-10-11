@@ -64,13 +64,15 @@ H.test(
     local s = p.new(a)
     p.action(s, 'section', 'replace')
     local lines = vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
-    H.eq(vim.list_slice(lines, 1, 6), {
+    H.eq(vim.list_slice(lines, 1, 8), {
       '[Search]    Aa[ ]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]',
       '',
       '[Include]',
       '',
       '[Exclude]',
       '',
+      '',
+      '[Results]  0/0',
     })
     local text = table.concat(lines, '\n')
     assert(not text:find('Replace', 1, true))

@@ -329,6 +329,7 @@ local function build_layout(s)
       )
     )
   end
+  add('')
   add(results.header(s))
   results.render(s, add, highlights)
   if s.sections.help then

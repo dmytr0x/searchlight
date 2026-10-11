@@ -195,6 +195,7 @@ H.test(
     )
     local s = H.search(a, { query = 'abc', context = 0 })
     view.render(s)
+    show_results(s)
     settled()
     local found = false
     for _, span in ipairs(spans()) do
@@ -221,6 +222,7 @@ H.test(
     local tick = vim.api.nvim_buf_get_changedtick(buf)
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     assert(#spans() > 0)
     H.eq(vim.api.nvim_buf_get_changedtick(buf), tick)
@@ -247,6 +249,7 @@ H.test(
     H.write(a .. '/one.lua', 'local abc = 42\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     local revision = s.layout_revision
     local position = s.result_positions[s.selected]
@@ -283,6 +286,7 @@ H.test(
     H.write(a .. '/one.lua', 'local abc = "text"\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     local before = syntax.diagnostics()
     vim.api.nvim_exec_autocmds('ColorScheme', {})
@@ -563,6 +567,7 @@ H.test(
     H.write(a .. '/one.lua', 'abc abc\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     H.eq(#spans(), 0)
     assert(syntax.diagnostics().failures > 0)
@@ -584,6 +589,7 @@ H.test(
     H.write(a .. '/one.lua', 'abc abc\n')
     local s = H.search(a, { query = '\\b', regex = true, context = 0 })
     view.render(s)
+    show_results(s)
     settled()
     local found = spans()
     H.eq(#found, 1)
@@ -620,6 +626,7 @@ H.test(
     H.write(a .. '/one.lua', 'abc\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     syntax._test.collect()
     assert(vim.wait(1000, function()
       return finish ~= nil
@@ -644,6 +651,7 @@ H.test(
     H.write(a .. '/one.md', '# abc\n\n```python\nabc = "text"\n```\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     H.eq(syntax.diagnostics().languages, 1)
     H.eq(syntax.diagnostics().parsers, 1)
@@ -805,6 +813,7 @@ H.test(
     H.write(a .. '/one.lua', 'local abc = "雪"\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     local found = spans()
     H.eq(#found, 2)
@@ -853,6 +862,7 @@ H.test(
     H.write(a .. '/one.lua', 'local abc = "text"\n')
     local s = H.search(a)
     view.render(s)
+    show_results(s)
     settled()
     local before = syntax.diagnostics()
     local runtime = a .. '/runtime'

@@ -14,7 +14,8 @@ end
 
 local function header(s)
   local lines = vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
-  return lines[s.regions.exclude.stop + 1]
+  H.eq(lines[s.regions.exclude.stop + 1], '')
+  return lines[s.regions.exclude.stop + 2]
 end
 
 H.test('green circle markers follow the cursor without shifting source columns', 'R-01', function()
