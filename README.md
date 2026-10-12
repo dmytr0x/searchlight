@@ -343,11 +343,15 @@ selected/excluded/stale styling and zero-width markers retain priority over synt
 Disable colors for new sessions with `setup({ syntax_highlighting = false })`.
 All panels share one conservative cache: two parsers, 128 KiB per file, 256 KiB retained
 source text, 2 MiB estimated bookkeeping, 8,192 spans, and 256 visible rows across at most
-eight windows. Extraction skips source lines over 4 KiB and processes at most 40 lines
-and 1,024 captures per chunk. In-flight work counts against these limits. Parser trees
-and query libraries also consume native memory; these logical limits are not an RSS
-guarantee. At most eight new languages are admitted; unsupported lookup and failure
-records are separately bounded. Embedded language injections are currently disabled
+eight windows. Extraction skips source lines over 4 KiB and works in 40-line chunks.
+Each tick processes at most 1,024 captures or 3 ms of a chunk, shows the lines finished
+so far, and resumes on the next tick, so dense code still gets full colors. In-flight
+work counts against these limits. Parser trees and query libraries also consume native
+memory; these logical limits are not an RSS guarantee. At most eight new languages are
+admitted; unsupported lookup and failure records are separately bounded. Missing
+parsers, query errors and filetype lookup errors suppress a file for 30 seconds. Parse
+timeouts and exhausted budgets retry automatically after 1, 2, 4… seconds (at most 30),
+without waiting for a scroll. Embedded language injections are currently disabled
 pending measurements; parent-language colors still work (including Markdown).
 
 Colorscheme changes redraw existing colors. Source filetype changes update colors

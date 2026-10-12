@@ -434,6 +434,8 @@ local function fake(options)
     range = function()
       return 0, 1, 0, 6
     end,
+    -- Real timers would retry transient failures inside later tests.
+    defer = function() end,
   }
 end
 
@@ -559,10 +561,96 @@ H.test(
 )
 
 H.test(
-  'capture budgets discard partial colors and suppress repeated work',
+  'dense chunks publish every capture across several ticks without failures',
   'Syntax,Budgets',
   function()
-    syntax._test.reset(fake({ captures = 1100 }))
+    local adapter, slices = fake(), 0
+    adapter.now = function()
+      return 0
+    end
+    adapter.query = function()
+      return {
+        captures = { 'string' },
+        -- 300 one-byte captures per source line, ordered by position.
+        iter_captures = function(_, _, _, start, stop)
+          slices = slices + 1
+          local row, col = start, -1
+          return function()
+            col = col + 1
+            if col == 300 then
+              row, col = row + 1, 0
+            end
+            if row < stop then
+              return 1, { row = row, col = col }, {}
+            end
+          end
+        end,
+      }
+    end
+    adapter.range = function(node)
+      return node.row, node.col, node.row, node.col + 1
+    end
+    syntax._test.reset(adapter)
+    local a = H.fixture()
+    H.write(a .. '/one.lua', string.rep('abc ' .. string.rep('x', 320) .. '\n', 10))
+    local s = H.search(a, { query = 'abc', context = 0 })
+    view.render(s)
+    show_results(s)
+    settled()
+    H.eq(#spans(), 3000)
+    H.eq(syntax.diagnostics().failures, 0)
+    assert(slices >= 3, 'dense chunk was extracted in one slice')
+    bounds()
+    syntax._test.reset()
+  end
+)
+
+H.test('parser callbacks delayed by scheduled work still publish spans', 'Syntax,Parser', function()
+  syntax._test.reset(fake({
+    parse = function(done, tree)
+      vim.schedule(function()
+        local started = vim.uv.hrtime()
+        while vim.uv.hrtime() - started < 50e6 do
+        end
+        vim.schedule(function()
+          done(nil, { tree })
+        end)
+      end)
+    end,
+  }))
+  local a = H.fixture()
+  H.write(a .. '/one.lua', 'abc abc\n')
+  local s = H.search(a)
+  view.render(s)
+  show_results(s)
+  settled()
+  assert(#spans() > 0, 'delayed parse lost colors')
+  H.eq(syntax.diagnostics().failures, 0)
+  syntax._test.reset()
+end)
+
+H.test(
+  'transient parse failures recolor after backoff without user input',
+  'Syntax,Parser,Budgets',
+  function()
+    local clock, deferred, attempts = 0, {}, 0
+    local adapter = fake({
+      parse = function(done, tree)
+        attempts = attempts + 1
+        if attempts <= 2 then
+          done('TIMEOUT')
+        else
+          done(nil, { tree })
+        end
+      end,
+    })
+    adapter.now = function()
+      return clock
+    end
+    adapter.defer = function(ms, callback)
+      deferred[#deferred + 1] = { ms, callback }
+    end
+    syntax._test.reset(adapter)
     local a = H.fixture()
     H.write(a .. '/one.lua', 'abc abc\n')
     local s = H.search(a)
@@ -570,15 +658,55 @@ H.test(
     show_results(s)
     settled()
     H.eq(#spans(), 0)
-    assert(syntax.diagnostics().failures > 0)
-    local before = syntax.diagnostics().extractions
-    p.navigate(s, 1)
-    settled()
-    H.eq(syntax.diagnostics().extractions, before)
-    bounds()
+    H.eq(syntax.diagnostics().failures, 1)
+    H.eq(#deferred, 1)
+    H.eq(deferred[1][1], 1000)
+    clock = clock + 1000
+    deferred[1][2]()
+    assert(vim.wait(1000, function()
+      return #deferred == 2
+    end, 5))
+    H.eq(deferred[2][1], 2000)
+    clock = clock + 2000
+    deferred[2][2]()
+    assert(vim.wait(1000, function()
+      return #spans() > 0
+    end, 5), 'colors did not return after the backoff expired')
+    H.eq(syntax.diagnostics().failures, 0)
+    H.eq(attempts, 3)
     syntax._test.reset()
   end
 )
+
+H.test('missing parsers still suppress retries', 'Syntax,Parser', function()
+  local clock, deferred, loads = 0, 0, 0
+  local adapter = fake()
+  adapter.now = function()
+    return clock
+  end
+  adapter.defer = function()
+    deferred = deferred + 1
+  end
+  adapter.load = function()
+    loads = loads + 1
+    return false
+  end
+  syntax._test.reset(adapter)
+  local a = H.fixture()
+  H.write(a .. '/one.lua', 'abc abc\n')
+  local s = H.search(a)
+  view.render(s)
+  show_results(s)
+  settled()
+  H.eq(loads, 1)
+  clock = clock + 60000
+  syntax.invalidate(s)
+  settled()
+  H.eq(loads, 1)
+  H.eq(deferred, 0)
+  H.eq(#spans(), 0)
+  syntax._test.reset()
+end)
 
 H.test(
   'directives priorities and private conceal captures respect syntax and match layers',

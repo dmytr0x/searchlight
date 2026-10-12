@@ -106,6 +106,9 @@ local adapter = {
     local r = vim.treesitter.get_range(node, text, metadata)
     return r[1], r[2], r[4], r[5]
   end,
+  defer = function(ms, callback)
+    vim.defer_fn(callback, ms)
+  end,
 }
 local default_adapter = adapter
 local default_limits = vim.deepcopy(limits)
@@ -185,6 +188,26 @@ local function record(records, name, key, cooldown)
 end
 local function suppressed(records, key)
   return records[key] and records[key][2] > now()
+end
+-- Transient failures (parse timeouts, budgets) retry with exponential backoff and
+-- recover without user input; permanent failures keep a fixed cooldown.
+local function retry()
+  for _, d in pairs(viewport.demands) do
+    if d.mapped then
+      d.done, d.next_map, d.next_line = false, 1, 0
+    end
+  end
+  M.request()
+end
+local function backoff(key)
+  local previous = cache.failures[key]
+  local attempts = (previous and previous[3] or 0) + 1
+  local delay = math.min(1000 * 2 ^ (attempts - 1), 30000)
+  record(cache.failures, 'failures', key, delay)
+  if cache.failures[key] then
+    cache.failures[key][3] = attempts
+    adapter.defer(delay, retry)
+  end
 end
 local function release_mapper(d)
   if d.scratch then
@@ -363,22 +386,28 @@ local function parse_entry(e)
   local key = e.key
   progress.busy = true
   counters.parses = counters.parses + 1
-  local started, done = now(), false
+  local done = false
+  -- Async parsing yields between slices, so wall-clock time also counts unrelated
+  -- scheduled work. The source cap bounds parse cost; Neovim's 'redrawtime' TIMEOUT
+  -- remains the safety net.
   local function finish(err, trees)
     if done then
       return
     end
     done, progress.busy, e.active = true, false, false
-    local elapsed = now() - started
     if cache.entries[key] ~= e then
       schedule_worker()
       return
     end
-    if err or not trees or not trees[1] or elapsed > 25 then
+    if err == 'TIMEOUT' then
+      backoff(key)
+      evict(key)
+    elseif err or not trees or not trees[1] then
       record(cache.failures, 'failures', key, 30000)
       evict(key)
     else
       e.tree = trees[1]
+      remove_record(cache.failures, 'failures', key)
     end
     schedule_worker()
   end
@@ -472,90 +501,134 @@ local function chunk_for(e, line)
     end
   end
 end
-local function reserve_chunk(lines)
+local function reserve_chunk(lines, first)
   if counters.chunks >= limits.chunks or not reserve(256) then
     return
   end
   count('chunks', 1)
-  return { spans = {}, lines = lines }
+  -- raw[k] keeps the query priority of span k so later slices can re-rank the chunk.
+  return { spans = {}, raw = {}, priorities = {}, lines = lines, next_line = first }
 end
-local function publish_chunk(e, first, chunk, priorities)
+local function drop_lines(chunk, line)
+  local spans, raw, kept = chunk.spans, chunk.raw, 0
+  local total = #spans
+  for i = 1, total, SPAN_WIDTH do
+    if spans[i] < line then
+      for k = 0, SPAN_WIDTH - 1 do
+        spans[kept + 1 + k] = spans[i + k]
+      end
+      raw[kept / SPAN_WIDTH + 1] = raw[(i - 1) / SPAN_WIDTH + 1]
+      kept = kept + SPAN_WIDTH
+    end
+  end
+  for i = total, kept + 1, -1 do
+    spans[i] = nil
+  end
+  for i = #raw, kept / SPAN_WIDTH + 1, -1 do
+    raw[i] = nil
+  end
+  local removed = (total - kept) / SPAN_WIDTH
+  counters.spans = counters.spans - removed
+  release(removed * 128)
+end
+local function publish_chunk(e, first, chunk)
   local spans = chunk.spans
   -- Rank priorities within a chunk, preserving overlap order below the match layer (2000).
-  local ordered = {}
-  for priority in pairs(priorities) do
+  local ordered, ranks = {}, {}
+  for priority in pairs(chunk.priorities) do
     ordered[#ordered + 1] = priority
   end
   table.sort(ordered)
   for rank, priority in ipairs(ordered) do
-    priorities[priority] = rank + 10
+    ranks[priority] = rank + 10
   end
-  for i = 5, #spans, SPAN_WIDTH do
-    spans[i] = priorities[spans[i]]
+  for i = SPAN_WIDTH, #spans, SPAN_WIDTH do
+    spans[i] = ranks[chunk.raw[i / SPAN_WIDTH]]
   end
   e.chunks[first] = chunk
   redraw()
 end
+local BUDGET = {}
+-- Extracts one slice of the chunk starting at `first`. Budgets end a slice early and
+-- publish the finished lines; returns true when the chunk needs no further work.
 local function extract(e, snapshot, first, last)
   local failure_key = e.key .. ':' .. first
   if suppressed(cache.failures, failure_key) then
-    return
+    return true
   end
-  local chunk = reserve_chunk(last - first + 1)
+  local chunk = e.chunks[first] or reserve_chunk(last - first + 1, first)
   if not chunk then
-    record(cache.failures, 'failures', failure_key, 30000)
-    return
+    backoff(failure_key)
+    return true
   end
-  local spans, visited, started = chunk.spans, 0, now()
-  local priorities = {}
+  local start, spans, raw, visited, started = chunk.next_line, chunk.spans, chunk.raw, 0, now()
+  local stop
   counters.extractions = counters.extractions + 1
-  local ok = pcall(function()
-    for id, node, metadata in e.query:iter_captures(e.tree:root(), e.text, first - 1, last) do
-      visited = visited + 1
-      high_water.captures = math.max(high_water.captures or 0, visited)
-      if visited >= limits.captures or now() - started > limits.batch_ms then
-        error('syntax chunk budget')
-      end
-      local name = e.query.captures[id]
+  local ok, err = pcall(function()
+    for id, node, metadata in e.query:iter_captures(e.tree:root(), e.text, start - 1, last) do
       metadata = metadata or {}
       local capture = metadata[id] or {}
+      local sr, sc, er, ec = adapter.range(node, e.text, capture)
+      visited = visited + 1
+      -- Captures starting on the slice's first line always run, so every slice advances.
+      if sr + 1 > start and (visited > limits.captures or now() - started > limits.batch_ms) then
+        stop = sr + 1
+        return
+      end
+      high_water.captures = math.max(high_water.captures or 0, visited)
+      local name = e.query.captures[id]
       if name and name:sub(1, 1) ~= '_' and not capture.conceal and not metadata.conceal then
         local group = intern('@' .. name .. '.' .. e.lang)
         if not group then
-          error('syntax group budget')
+          error(BUDGET)
         end
-        local sr, sc, er, ec = adapter.range(node, e.text, capture)
         local priority = tonumber(capture.priority or metadata.priority) or 100
         if priority ~= priority or math.abs(priority) == math.huge then
           priority = 100
         end
-        for line = math.max(first, sr + 1), math.min(last, er + 1) do
+        for line = math.max(start, sr + 1), math.min(last, er + 1) do
           local length = #snapshot.lines[line]
           local left = line == sr + 1 and math.max(0, sc) or 0
           local right = math.min(length, line == er + 1 and ec or length)
           if length <= limits.line_bytes and right > left then
             if counters.spans >= limits.spans or not reserve(128) then
-              error('syntax span budget')
+              error(BUDGET)
             end
             count('spans', 1)
             local n = #spans
             spans[n + 1], spans[n + 2], spans[n + 3], spans[n + 4], spans[n + 5] =
               line, left, right, group, priority
-            priorities[priority] = true
+            raw[#raw + 1] = priority
+            chunk.priorities[priority] = true
           end
         end
       end
     end
   end)
-  local elapsed = now() - started
-  counters.max_batch_ms = math.max(counters.max_batch_ms, elapsed)
-  if not ok or elapsed > limits.batch_ms then
-    release_chunk(chunk)
+  counters.max_batch_ms = math.max(counters.max_batch_ms, now() - started)
+  if not ok then
+    if e.chunks[first] then
+      remove_chunk(e, first)
+    else
+      release_chunk(chunk)
+    end
     counters.dropped = counters.dropped + 1
-    record(cache.failures, 'failures', failure_key, 30000)
-    return
+    if err == BUDGET then
+      backoff(failure_key)
+    else
+      record(cache.failures, 'failures', failure_key, 30000)
+    end
+    return true
   end
-  publish_chunk(e, first, chunk, priorities)
+  if stop then
+    -- Multiline captures already wrote lines at or after `stop`; the next slice rewrites them.
+    drop_lines(chunk, stop)
+  else
+    remove_record(cache.failures, 'failures', failure_key)
+  end
+  chunk.next_line = stop or last + 1
+  publish_chunk(e, first, chunk)
+  return not stop
 end
 
 local function collect()
@@ -763,7 +836,7 @@ local function enrich_demand(s, d, started)
       if e then
         chunk, chunk_start = chunk_for(e, first)
       end
-      if chunk then
+      if chunk and chunk.next_line >= chunk_start + chunk.lines then
         e.used = tick()
         d.next_line = math.min(#d.maps[i + 3], chunk_start + chunk.lines - d.maps[i + 1])
       else
@@ -772,17 +845,23 @@ local function enrich_demand(s, d, started)
           return
         end
         if e and e.tree then
-          local last = math.min(d.maps[i + 1] + #d.maps[i + 3] - 1, first + limits.chunk_lines - 1)
-          for cached in pairs(e.chunks) do
-            if cached > first then
-              last = math.min(last, cached - 1)
+          local last
+          if chunk then
+            first, last = chunk_start, chunk_start + chunk.lines - 1
+          else
+            last = math.min(d.maps[i + 1] + #d.maps[i + 3] - 1, first + limits.chunk_lines - 1)
+            for cached in pairs(e.chunks) do
+              if cached > first then
+                last = math.min(last, cached - 1)
+              end
             end
           end
           trim_spans()
-          extract(e, snapshot, first, last)
-          d.next_line = last - d.maps[i + 1] + 1
-          if d.next_line >= #d.maps[i + 3] then
-            d.next_map, d.next_line = i + MAP_WIDTH, 0
+          if extract(e, snapshot, first, last) then
+            d.next_line = math.min(#d.maps[i + 3], last - d.maps[i + 1] + 1)
+            if d.next_line >= #d.maps[i + 3] then
+              d.next_map, d.next_line = i + MAP_WIDTH, 0
+            end
           end
           schedule_worker()
           return
