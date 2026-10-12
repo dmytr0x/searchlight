@@ -371,6 +371,20 @@ without rerunning searches. After explicitly replacing highlight queries, call
 `:doautocmd User SearchlightHighlightReload`; this discards query spans while retaining
 reusable snapshot parses. Runtimepath changes also invalidate query spans.
 
+## Highlight groups
+
+| Group | Default link | Used for |
+| --- | --- | --- |
+| `SearchlightMatch` | `Search` | Matches in results |
+| `SearchlightSelected` | `IncSearch` | Selected match |
+| `SearchlightPath` | `Directory` | Directory part of file headers |
+| `SearchlightControl` | `Title` | Search option controls |
+| `SearchlightMarker` | `DiagnosticOk` | Cursor result marker |
+
+`SearchlightPath`, `SearchlightControl` and `SearchlightMarker` are default links, so a
+`:highlight` definition in your config or colorscheme overrides them.
+`SearchlightMatch` and `SearchlightSelected` always follow `Search` and `IncSearch`.
+
 ## Validation and design
 
 ```sh

@@ -28,10 +28,9 @@ H.test('green circle markers follow the cursor without shifting source columns',
     return vim.api.nvim_buf_get_extmarks(s.buf, namespace, 0, -1, { details = true })
   end
   H.eq(filled(), {})
-  local colors = vim.api.nvim_get_hl_ns({ winid = vim.api.nvim_get_current_win() })
-  H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightMarker' }).fg, 0x98c379)
-  H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightControl' }).fg, 0xffffff)
-  H.eq(vim.api.nvim_get_hl(colors, { name = 'SearchlightPath' }).fg, 0xffffff)
+  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightMarker' }).link, 'DiagnosticOk')
+  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightControl' }).link, 'Title')
+  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightPath' }).link, 'Directory')
   local positions = vim.deepcopy(s.result_positions)
   for _, index in ipairs({ 1, 2, 3 }) do
     local position = positions[s.results[index].id]
@@ -394,6 +393,46 @@ H.test('selection patches match a full render across 10,000 results', 'R-01', fu
     assert(not vim.deep_equal(other, plain), 'match is not highlighted')
   end, debug.traceback)
   view.render = render
+  if not ok then
+    error(err)
+  end
+end)
+
+H.test('panel colors follow the colorscheme and keep user overrides', 'R-01', function()
+  local background = vim.o.background
+  local ok, err = xpcall(function()
+    vim.cmd('set background=light | colorscheme default')
+    local function fg(name)
+      return vim.api.nvim_get_hl(0, { name = name, link = false }).fg
+    end
+    H.eq(fg('SearchlightPath'), fg('Directory'))
+    H.eq(fg('SearchlightControl'), fg('Title'))
+    H.eq(fg('SearchlightMarker'), fg('DiagnosticOk'))
+    vim.cmd('highlight SearchlightPath guifg=#ff0000')
+    p.setup()
+    vim.api.nvim_exec_autocmds('ColorScheme', {})
+    H.eq(fg('SearchlightPath'), 0xff0000)
+    local a = H.fixture()
+    H.write(a .. '/src/one.lua', 'abc\n')
+    local s = H.search(a)
+    vim.cmd('redraw!')
+    local win = vim.api.nvim_get_current_win()
+    local path
+    for _, mark in ipairs(view.decorations(s)) do
+      if mark[4].hl_group == 'SearchlightPath' then
+        path = mark
+      end
+    end
+    assert(path, 'path decoration missing')
+    local screen = vim.fn.screenpos(win, path[2] + 1, path[3] + 1)
+    assert(screen.row > 0, 'path is off screen')
+    local cell = vim.api.nvim__inspect_cell(1, screen.row - 1, screen.col - 1)
+    H.eq(cell[1], 's')
+    H.eq(cell[2].foreground, 0xff0000)
+  end, debug.traceback)
+  vim.cmd('highlight clear SearchlightPath')
+  vim.o.background = background
+  vim.cmd('colorscheme default')
   if not ok then
     error(err)
   end

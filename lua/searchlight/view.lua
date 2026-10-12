@@ -7,6 +7,17 @@ local M = { namespace = vim.api.nvim_create_namespace('searchlight') }
 local panel_colors = vim.api.nvim_create_namespace('searchlight_panel_colors')
 local cursor_marker = vim.api.nvim_create_namespace('searchlight_cursor_marker')
 local decorations = vim.api.nvim_create_namespace('searchlight_results')
+local global_colors = {
+  SearchlightMarker = 'DiagnosticOk',
+  SearchlightControl = 'Title',
+  SearchlightPath = 'Directory',
+}
+-- `default` keeps user definitions; `:colorscheme` clears global groups, so rerun on ColorScheme.
+local function register_global_colors()
+  for group, target in pairs(global_colors) do
+    vim.api.nvim_set_hl(0, group, { link = target, default = true })
+  end
+end
 local function register_panel_colors()
   -- Native hlsearch belongs to source navigation; panel matches come from result ranges.
   for _, group in ipairs({ 'Search', 'CurSearch', 'IncSearch' }) do
@@ -14,11 +25,16 @@ local function register_panel_colors()
   end
   vim.api.nvim_set_hl(panel_colors, 'SearchlightMatch', { link_global = 'Search' })
   vim.api.nvim_set_hl(panel_colors, 'SearchlightSelected', { link_global = 'IncSearch' })
-  vim.api.nvim_set_hl(panel_colors, 'SearchlightMarker', { fg = '#98c379', ctermfg = 114 })
-  vim.api.nvim_set_hl(panel_colors, 'SearchlightControl', { fg = '#ffffff', ctermfg = 15 })
-  vim.api.nvim_set_hl(panel_colors, 'SearchlightPath', { fg = '#ffffff', ctermfg = 15 })
+  for group in pairs(global_colors) do
+    vim.api.nvim_set_hl(panel_colors, group, { link_global = group })
+  end
+  register_global_colors()
   local window_colors = {}
   local color_group = vim.api.nvim_create_augroup('SearchlightPanelColors', { clear = true })
+  vim.api.nvim_create_autocmd(
+    'ColorScheme',
+    { group = color_group, callback = register_global_colors }
+  )
   vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWinEnter', 'WinEnter' }, {
     group = color_group,
     callback = function()
