@@ -2,6 +2,38 @@ local H = require('tests.helpers')
 local p = require('searchlight')
 local view = require('searchlight.view')
 H.test(
+  'typing in Search keeps exactly two blank lines between empty Exclude and Results',
+  'Q-01,Q-09',
+  function()
+    local a = H.fixture()
+    vim.cmd('SearchlightNew ' .. vim.fn.fnameescape(a))
+    local s = require('searchlight.sessions').by_buf[vim.api.nvim_get_current_buf()]
+    local function tail()
+      return vim.api.nvim_buf_get_lines(
+        s.buf,
+        s.regions.exclude.start - 1,
+        s.results_header_row + 1,
+        false
+      )
+    end
+    local expected = { '[Exclude]', '', '', '[Results]  0/0' }
+    H.eq(tail(), expected)
+    for _, query in ipairs({ 'a', 'ab', '' }) do
+      local region = s.regions.query
+      vim.api.nvim_buf_set_lines(s.buf, region.start, region.stop, false, { query })
+      vim.api.nvim_exec_autocmds('TextChangedI', { buffer = s.buf })
+      assert(vim.wait(1000, function()
+        return not s.render_pending and not s.layout_invalid
+      end, 5), 'input redraw timed out')
+      H.eq(s.fields.query, query)
+      H.eq(tail(), expected)
+    end
+    s.message = 'Search failed'
+    view.render(s)
+    H.eq(tail(), { '[Exclude]', '', 'Search failed', '', '[Results]  0/0' })
+  end
+)
+H.test(
   'grouped inputs keep editable regions and compact search controls together',
   'Q-01,Q-05,Q-09',
   function()

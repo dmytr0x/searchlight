@@ -333,7 +333,7 @@ local function build_layout(s)
         .. ']'
     )
   end
-  if s.message then
+  if s.message and s.message ~= '' then
     add(s.message:gsub('[\r\n]', ' '))
   end
   if s.report then
