@@ -8,14 +8,15 @@ local panel_colors = vim.api.nvim_create_namespace('searchlight_panel_colors')
 local cursor_marker = vim.api.nvim_create_namespace('searchlight_cursor_marker')
 local decorations = vim.api.nvim_create_namespace('searchlight_results')
 local global_colors = {
-  SearchlightMarker = 'DiagnosticOk',
-  SearchlightControl = 'Title',
-  SearchlightPath = 'Directory',
+  SearchlightMarker = { link = 'DiagnosticOk' },
+  SearchlightControl = { link = 'Title' },
+  SearchlightFilename = { fg = '#ffff00', ctermfg = 'Yellow' },
+  SearchlightPath = { fg = '#ffffff', ctermfg = 'White' },
 }
 -- `default` keeps user definitions; `:colorscheme` clears global groups, so rerun on ColorScheme.
 local function register_global_colors()
-  for group, target in pairs(global_colors) do
-    vim.api.nvim_set_hl(0, group, { link = target, default = true })
+  for group, definition in pairs(global_colors) do
+    vim.api.nvim_set_hl(0, group, vim.tbl_extend('force', definition, { default = true }))
   end
 end
 local function register_panel_colors()
@@ -464,7 +465,7 @@ local function row_decorations(s, row, emit)
   local header = s.file_header_spans[row + 1]
   if header then
     emit(row, 0, { end_col = header[1], hl_group = 'CursorLine', hl_eol = true, priority = 90 })
-    emit(row, 0, { end_col = header[2], hl_group = 'Title', priority = 2000 })
+    emit(row, 0, { end_col = header[2], hl_group = 'SearchlightFilename', priority = 2000 })
     if header[3] > 0 then
       emit(row, header[2] + 2, {
         end_col = header[2] + 2 + header[3],

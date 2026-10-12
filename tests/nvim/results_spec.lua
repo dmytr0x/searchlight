@@ -30,7 +30,8 @@ H.test('green circle markers follow the cursor without shifting source columns',
   H.eq(filled(), {})
   H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightMarker' }).link, 'DiagnosticOk')
   H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightControl' }).link, 'Title')
-  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightPath' }).link, 'Directory')
+  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightFilename' }).fg, 0xffff00)
+  H.eq(vim.api.nvim_get_hl(0, { name = 'SearchlightPath' }).fg, 0xffffff)
   local positions = vim.deepcopy(s.result_positions)
   for _, index in ipairs({ 1, 2, 3 }) do
     local position = positions[s.results[index].id]
@@ -211,17 +212,20 @@ H.test(
     H.eq(vim.tbl_count(s.file_rows), 2)
     H.eq(vim.tbl_count(s.result_rows), 3)
     local marks = view.decorations(s)
-    local highlighted, paths = {}, {}
+    local highlighted, filenames, paths = {}, {}, {}
     for _, mark in ipairs(marks) do
       local details = mark[4]
       local line = vim.api.nvim_buf_get_lines(s.buf, mark[2], mark[2] + 1, false)[1]
       if details.hl_group == 'SearchlightMatch' or details.hl_group == 'SearchlightSelected' then
         table.insert(highlighted, line:sub(mark[3] + 1, details.end_col))
+      elseif details.hl_group == 'SearchlightFilename' then
+        table.insert(filenames, line:sub(mark[3] + 1, details.end_col))
       elseif details.hl_group == 'SearchlightPath' then
         table.insert(paths, line:sub(mark[3] + 1, details.end_col))
       end
     end
     H.eq(highlighted, { 'abc', 'abc', 'abc', 'abc' })
+    H.eq(filenames, { '▾ one.lua', '▾ one.lua' })
     H.eq(paths, { 'src/', 'tests/' })
     -- Process callbacks can interleave files before the generation settles.
     s.results = { s.results[4], s.results[2], s.results[3], s.results[1] }
@@ -403,7 +407,8 @@ H.test('panel colors follow the colorscheme and keep user overrides', 'R-01', fu
     local function fg(name)
       return vim.api.nvim_get_hl(0, { name = name, link = false }).fg
     end
-    H.eq(fg('SearchlightPath'), fg('Directory'))
+    H.eq(fg('SearchlightFilename'), 0xffff00)
+    H.eq(fg('SearchlightPath'), 0xffffff)
     H.eq(fg('SearchlightControl'), fg('Title'))
     H.eq(fg('SearchlightMarker'), fg('DiagnosticOk'))
     vim.cmd('highlight SearchlightPath guifg=#ff0000')
@@ -415,12 +420,20 @@ H.test('panel colors follow the colorscheme and keep user overrides', 'R-01', fu
     local s = H.search(a)
     vim.cmd('redraw!')
     local win = vim.api.nvim_get_current_win()
-    local path
+    local filename, path
     for _, mark in ipairs(view.decorations(s)) do
-      if mark[4].hl_group == 'SearchlightPath' then
+      if mark[4].hl_group == 'SearchlightFilename' then
+        filename = mark
+      elseif mark[4].hl_group == 'SearchlightPath' then
         path = mark
       end
     end
+    assert(filename, 'filename decoration missing')
+    local name_screen = vim.fn.screenpos(win, filename[2] + 1, #'▾ ' + 1)
+    assert(name_screen.row > 0, 'filename is off screen')
+    local name_cell = vim.api.nvim__inspect_cell(1, name_screen.row - 1, name_screen.col - 1)
+    H.eq(name_cell[1], 'o')
+    H.eq(name_cell[2].foreground, 0xffff00)
     assert(path, 'path decoration missing')
     local screen = vim.fn.screenpos(win, path[2] + 1, path[3] + 1)
     assert(screen.row > 0, 'path is off screen')
