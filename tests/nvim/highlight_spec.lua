@@ -591,6 +591,7 @@ H.test(
   'Syntax,Budgets',
   function()
     local adapter, slices = fake(), 0
+    local heartbeat, first_tick = vim.uv.new_timer(), nil
     adapter.now = function()
       return 0
     end
@@ -600,6 +601,15 @@ H.test(
         -- 300 one-byte captures per source line, ordered by position.
         iter_captures = function(_, _, _, start, stop)
           slices = slices + 1
+          if slices == 1 then
+            heartbeat:start(
+              0,
+              0,
+              vim.schedule_wrap(function()
+                first_tick = syntax.diagnostics().spans
+              end)
+            )
+          end
           local row, col = start, -1
           return function()
             col = col + 1
@@ -623,9 +633,15 @@ H.test(
     view.render(s)
     show_results(s)
     settled()
+    vim.wait(100, function()
+      return first_tick ~= nil
+    end, 1)
+    heartbeat:stop()
+    heartbeat:close()
     H.eq(#spans(), 3000)
     H.eq(syntax.diagnostics().failures, 0)
     assert(slices >= 3, 'dense chunk was extracted in one slice')
+    assert(first_tick and first_tick < 3000, 'syntax slices prevented the heartbeat from running')
     bounds()
     syntax._test.reset()
   end

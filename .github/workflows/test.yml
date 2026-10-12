@@ -12,16 +12,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
         nvim: [stable, nightly]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             rg_target: x86_64-unknown-linux-musl
           - os: macos-latest
             rg_target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
@@ -37,9 +37,9 @@ jobs:
       - run: make benchmark
 
   syntax-benchmark:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
@@ -57,10 +57,10 @@ jobs:
           SEARCHLIGHT_BENCH_REPORT: ${{ runner.temp }}/syntax-benchmark.json
 
   format:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: JohnnyMorganz/stylua-action@v4
+      - uses: actions/checkout@v7
+      - uses: JohnnyMorganz/stylua-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.5.2

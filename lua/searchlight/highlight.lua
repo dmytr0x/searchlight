@@ -387,10 +387,12 @@ end
 local function schedule_worker()
   if not progress.pending and not progress.busy then
     progress.pending = true
-    vim.schedule(function()
+    -- Yield to the event loop between slices. Chaining vim.schedule callbacks can
+    -- drain the entire workload before timers and input get another turn.
+    vim.defer_fn(function()
       progress.pending = false
       worker()
-    end)
+    end, 0)
   end
 end
 local function valid(d)

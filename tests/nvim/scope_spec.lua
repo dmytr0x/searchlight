@@ -277,10 +277,11 @@ H.test('a symlinked root reports sources under its canonical path', '4.5', funct
   -- On macOS /tmp is itself a symlink to /private/tmp.
   local tmp = vim.uv.fs_mkdtemp('/tmp/searchlight-XXXXXX')
   if tmp then
+    local canonical = assert(vim.uv.fs_realpath(tmp))
     H.write(tmp .. '/one', 'abc\n')
     local ok, s = pcall(H.search, tmp)
     vim.fn.delete(tmp, 'rf')
     assert(ok, s)
-    H.eq(s.results[1].path, vim.uv.fs_realpath(tmp) .. '/one')
+    H.eq(s.results[1].path, canonical .. '/one')
   end
 end)
