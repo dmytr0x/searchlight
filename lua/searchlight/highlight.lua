@@ -435,7 +435,8 @@ local function parse_entry(e)
     end
     schedule_worker()
   end
-  -- Callback parsing yields cooperatively.
+  -- The callback API can yield during injection processing, but Neovim's native
+  -- string parse ignores its timeout. The snapshot size cap bounds that pause.
   local parsed, err = pcall(e.parser.parse, e.parser, false, finish)
   if not parsed then
     finish(err)

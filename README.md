@@ -312,7 +312,7 @@ require('searchlight').setup({
   context_size = 2,
   syntax_highlighting = true,
   syntax_injections = false,
-  syntax_max_file_bytes = 256 * 1024,
+  syntax_max_file_bytes = 128 * 1024,
   debounce_ms = 150,
   max_results = 10000,
   concurrency = 4,
@@ -343,9 +343,10 @@ errors, oversized files and exhausted budgets leave readable plain text. Search,
 selected/excluded/stale styling and zero-width markers retain priority over syntax.
 
 Disable colors for new sessions with `setup({ syntax_highlighting = false })`.
-Files over `syntax_max_file_bytes` (default 256 KiB) stay plain. Neovim parses a
-source string in one uninterrupted step (about 0.07 ms per KiB), so this cap bounds the
-longest editor pause.
+Files over `syntax_max_file_bytes` (default 128 KiB) stay plain. Neovim parses a
+source string in one uninterrupted step, even with the callback API. The conservative
+default bounds this editor pause on slower machines. You can raise the cap to color
+larger files, at the cost of longer pauses.
 All panels share one conservative cache: two parsers, 512 KiB retained source text,
 8,192 spans, and 256 visible rows across at most eight windows. A file over 512 KiB is
 never parsed, whatever the setting. Extraction skips source lines over 4 KiB and works in

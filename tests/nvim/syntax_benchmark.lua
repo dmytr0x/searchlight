@@ -165,6 +165,9 @@ local ok, err = xpcall(function()
   H.write(stress .. '/long.lua', 'local abc = "' .. string.rep('x', 5000) .. '"\n')
   H.write(stress .. '/embedded.md', '# abc\n\n```lua\nlocal abc = "abc"\n```\n')
   local s = search(stress)
+  if enabled then
+    assert(syntax.diagnostics().spans > 0, 'source just below the default cap was not exercised')
+  end
   for _ = 1, 20 do
     p.set(s, { query = '42' })
     p.refresh(s)
@@ -177,9 +180,13 @@ local ok, err = xpcall(function()
   p.close(s)
 
   for _, name in ipairs({ 'large.lua', 'oversized.lua', 'long.lua', 'embedded.md' }) do
+    local parses = syntax.diagnostics().parses
     local panel = search(stress, { query = 'abc', include = { name } })
-    if enabled and name == 'large.lua' then
-      assert(syntax.diagnostics().spans > 0, 'large source syntax was not exercised')
+    if name == 'large.lua' then
+      -- String parses do not honor Neovim's async timeout. Above-cap snapshots
+      -- must stay plain so the default workload still meets the heartbeat gate.
+      H.eq(syntax.diagnostics().rows, 0)
+      H.eq(syntax.diagnostics().parses, parses)
     end
     if enabled and name == 'embedded.md' then
       assert(syntax.diagnostics().rows > 0, 'embedded parent syntax was not exercised')

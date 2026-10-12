@@ -293,7 +293,7 @@ H.test(
     p.setup({ syntax_highlighting = config })
     H.cleanup()
     a = H.fixture()
-    -- 600 KiB, over the 256 KiB default file cap.
+    -- 600 KiB, over the default file cap and the shared retained-source budget.
     H.write(a .. '/one.lua', '-- abc\n' .. string.rep('-- padding\n', 56000))
     H.write(a .. '/two.lua', '-- abc ' .. string.rep('x', 5000) .. '\n')
     H.write(a .. '/three.unsupported', 'abc\n')
@@ -314,12 +314,31 @@ H.test(
   end
 )
 
-H.test('a 240 KiB source colors its visible rows', 'Syntax,Budgets', function()
+H.test('sources over 128 KiB stay plain by default', 'Syntax,Fallback,Budgets', function()
+  syntax._test.reset()
+  local a = H.fixture()
+  local text = 'local abc = 42\n'
+  H.write(a .. '/large.lua', text .. string.rep('-- padding\n', math.ceil(128 * 1024 / 11)))
+  local parses = syntax.diagnostics().parses
+  local s = H.search(a)
+  view.render(s)
+  show_results(s)
+  settled()
+  H.eq(#s.results, 1)
+  H.eq(s.status, 'complete')
+  H.eq(syntax.diagnostics().rows, 0)
+  H.eq(syntax.diagnostics().parses, parses)
+  H.eq(#spans(), 0)
+  bounds()
+end)
+
+H.test('an explicit larger cap colors a 240 KiB source', 'Syntax,Budgets', function()
   syntax._test.reset()
   local a = H.fixture()
   local line = 'local abc = 42 -- abc\n'
   H.write(a .. '/large.lua', string.rep(line, math.floor(240 * 1024 / #line)))
   local s = H.search(a, { query = 'abc', context = 0 })
+  s.config.syntax_max_file_bytes = 256 * 1024
   view.render(s)
   local rows = vim.api.nvim_buf_line_count(s.buf)
   vim.api.nvim_win_set_cursor(0, { math.floor(rows / 2), 0 })
