@@ -16,7 +16,9 @@ function M.navigate(s, delta, wrap)
   local _, index = results.selected(s)
   if wrap ~= nil and vim.api.nvim_get_current_buf() == s.buf then
     -- Async results may have arrived since the last scheduled redraw.
-    view.render(s)
+    if not view.layout_fresh(s) then
+      view.render(s)
+    end
     local cursor = vim.api.nvim_win_get_cursor(0)
     index = delta > 0 and 0 or #s.results + 1
     for i, result in ipairs(s.results) do
@@ -39,11 +41,14 @@ function M.navigate(s, delta, wrap)
   if wrap and index and #s.results > 0 then
     target = (index - 1 + delta) % #s.results + 1
   end
-  s.selected, s.navigation_end = s.results[target] and s.results[target].id, false
+  s.navigation_end = false
   if s.results[target] then
     s.collapsed_paths[s.results[target].path] = nil
   end
-  view.render(s)
+  -- An expanded file has no rendered positions yet, so select falls back to render.
+  if not view.select(s, s.results[target] and s.results[target].id) then
+    view.render(s)
+  end
   local position = s.result_positions[s.selected]
   if position and vim.api.nvim_get_current_buf() == s.buf then
     vim.api.nvim_win_set_cursor(0, { position.row, position.col })

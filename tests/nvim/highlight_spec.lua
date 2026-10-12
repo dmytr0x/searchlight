@@ -171,7 +171,7 @@ H.test(
     vim.cmd('redraw')
     H.eq(vim.api.nvim_buf_get_extmarks(s.buf, syntax.namespace, 0, -1, {}), {})
     for _, mark in
-      ipairs(vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true }))
+      ipairs(view.decorations(s))
     do
       if
         mark[4].hl_group == 'SearchlightMatch' or mark[4].hl_group == 'SearchlightSelected'
@@ -597,7 +597,7 @@ H.test(
     assert(found[1][5] < 2000)
     local overlays = 0
     for _, mark in
-      ipairs(vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true }))
+      ipairs(view.decorations(s))
     do
       if mark[4].virt_text then
         overlays = overlays + 1

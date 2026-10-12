@@ -215,7 +215,7 @@ H.test(
     H.eq(#s.results, 4)
     H.eq(vim.tbl_count(s.file_rows), 2)
     H.eq(vim.tbl_count(s.result_rows), 3)
-    local marks = vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true })
+    local marks = view.decorations(s)
     local highlighted, paths = {}, {}
     for _, mark in ipairs(marks) do
       local details = mark[4]
@@ -336,3 +336,69 @@ H.test(
     H.wait(s, 'complete')
   end
 )
+
+H.test('selection patches match a full render across 10,000 results', 'R-01', function()
+  local a = H.fixture()
+  for i = 1, 200 do
+    H.write(a .. string.format('/file%03d', i), string.rep('abc = ' .. i .. ' -- abc\n', 25))
+  end
+  local s = H.search(a, { query = 'abc', context = 0 })
+  H.eq(#s.results, 10000)
+  view.render(s)
+  local render, renders = view.render, 0
+  view.render = function(...)
+    renders = renders + 1
+    return render(...)
+  end
+  local ok, err = xpcall(function()
+    local undo = vim.fn.undotree(s.buf).seq_last
+    local function matches_full_render()
+      local lines = vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
+      local rows = vim.deepcopy(s.result_rows)
+      render(s)
+      H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, -1, false), lines)
+      H.eq(s.result_rows, rows)
+    end
+    for step = 1, 60 do
+      if step % 3 == 0 then
+        p.navigate(s, 7)
+      elseif step % 3 == 1 then
+        p.navigate(s, -3)
+      else
+        local position = s.result_positions[s.results[(step * 137) % 10000 + 1].id]
+        vim.api.nvim_win_set_cursor(0, { position.row, position.col })
+        vim.api.nvim_exec_autocmds('CursorMoved', { buffer = s.buf })
+      end
+      -- Odd steps stack two patches before comparing.
+      if step % 2 == 0 then
+        matches_full_render()
+      end
+    end
+    p.navigate(s, 10000)
+    matches_full_render()
+    p.navigate(s, 1, true)
+    H.eq(s.selected, s.results[1].id)
+    matches_full_render()
+    H.eq(renders, 0)
+    H.eq(vim.fn.undotree(s.buf).seq_last, undo)
+    -- The decoration provider, not stored extmarks, colors the selected match.
+    p.navigate(s, 1)
+    vim.cmd('normal! zz')
+    vim.cmd('redraw!')
+    local win = vim.api.nvim_get_current_win()
+    local function attribute(row, col)
+      local screen = vim.fn.screenpos(win, row, col + 1)
+      return vim.api.nvim__inspect_cell(1, screen.row - 1, screen.col - 1)[2]
+    end
+    local first, second = unpack(s.result_occurrences[s.result_positions[s.selected].row])
+    H.eq(second.id, s.selected)
+    local selected, other = attribute(second.row, second.col), attribute(first.row, first.col)
+    local plain = attribute(first.row, first.stop + 1)
+    assert(not vim.deep_equal(selected, other), 'selected match is not distinct')
+    assert(not vim.deep_equal(other, plain), 'match is not highlighted')
+  end, debug.traceback)
+  view.render = render
+  if not ok then
+    error(err)
+  end
+end)

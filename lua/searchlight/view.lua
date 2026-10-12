@@ -4,6 +4,7 @@ local syntax = require('searchlight.highlight')
 local M = { namespace = vim.api.nvim_create_namespace('searchlight') }
 local panel_colors = vim.api.nvim_create_namespace('searchlight_panel_colors')
 local cursor_marker = vim.api.nvim_create_namespace('searchlight_cursor_marker')
+local decorations = vim.api.nvim_create_namespace('searchlight_results')
 local function register_panel_colors()
   -- Native hlsearch belongs to source navigation; panel matches come from result ranges.
   for _, group in ipairs({ 'Search', 'CurSearch', 'IncSearch' }) do
@@ -330,8 +331,8 @@ local function build_layout(s)
     )
   end
   add('')
-  add(results.header(s))
-  results.render(s, add, highlights)
+  s.results_header_row = add(results.header(s))
+  results.render(s, add)
   if s.sections.help then
     add_help(s, add)
   end
@@ -448,6 +449,84 @@ local function restore_windows(s, layout, cursors, views)
   end
 end
 
+-- Calls emit(row, col, opts) for each result-area decoration on a zero-based row.
+-- Work is bounded by the matches on that row; drawing runs on every redraw.
+local function row_decorations(s, row, emit)
+  local header = s.file_header_spans[row + 1]
+  if header then
+    emit(row, 0, { end_col = header[1], hl_group = 'CursorLine', hl_eol = true, priority = 90 })
+    emit(row, 0, { end_col = header[2], hl_group = 'Title', priority = 2000 })
+    if header[3] > 0 then
+      emit(row, header[2] + 2, {
+        end_col = header[2] + 2 + header[3],
+        hl_group = 'SearchlightPath',
+        priority = 2000,
+      })
+    end
+    return
+  end
+  local gutter = s.result_gutters[row + 1]
+  if not gutter then
+    return
+  end
+  emit(row, 0, { end_col = gutter, hl_group = 'LineNr', priority = 2000 })
+  local marker = s.result_markers[row + 1]
+  if marker then
+    emit(row, marker, { end_col = marker + #'○', hl_group = 'SearchlightMarker', priority = 2001 })
+  end
+  for _, occurrence in ipairs(s.result_occurrences[row + 1] or {}) do
+    local group = occurrence.disabled and 'Comment'
+      or occurrence.id == s.selected and 'SearchlightSelected'
+      or 'SearchlightMatch'
+    local opts = { end_col = occurrence.stop, hl_group = group, priority = 2000 }
+    if occurrence.stop == occurrence.col then
+      opts.virt_text = { { '│', group } }
+      opts.virt_text_pos = 'overlay'
+    end
+    emit(row, occurrence.col, opts)
+  end
+end
+
+local function drawable(s)
+  return sessions.owns(s) and not s.layout_invalid and s.result_gutters ~= nil or false
+end
+
+vim.api.nvim_set_decoration_provider(decorations, {
+  on_win = function(_, _, buf)
+    return drawable(sessions.by_buf[buf])
+  end,
+  on_line = function(_, _, buf, row)
+    row_decorations(sessions.by_buf[buf], row, function(line, col, opts)
+      opts.ephemeral, opts.strict = true, false
+      vim.api.nvim_buf_set_extmark(buf, decorations, line, col, opts)
+    end)
+  end,
+})
+
+-- Decorations drawn on result rows, shaped like nvim_buf_get_extmarks({ details = true }).
+function M.decorations(s)
+  local marks = {}
+  if drawable(s) then
+    for row = 0, vim.api.nvim_buf_line_count(s.buf) - 1 do
+      row_decorations(s, row, function(line, col, opts)
+        table.insert(marks, { 0, line, col, opts })
+      end)
+    end
+  end
+  return marks
+end
+
+-- True when the buffer still shows the last rendered result rows.
+function M.layout_fresh(s)
+  local rendered = s.rendered
+  return not s.layout_invalid
+    and not s.fields_dirty
+    and rendered ~= nil
+    and rendered.results == s.results
+    and rendered.count == #s.results
+    and rendered.tick == vim.api.nvim_buf_get_changedtick(s.buf)
+end
+
 function M.render(s)
   if not sessions.owns(s) or s.rendering then
     return
@@ -459,10 +538,63 @@ function M.render(s)
   decorate(s, layout)
   restore_windows(s, layout, cursors, views)
   vim.bo[s.buf].modified = false
+  s.rendered = {
+    results = s.results,
+    count = #s.results,
+    tick = vim.api.nvim_buf_get_changedtick(s.buf),
+  }
   s.rendering = false
   s.fields_dirty = false
   M.update_cursor_marker(s)
   syntax.layout_changed(s)
+end
+
+-- Selects result id. Without a layout change, rewrites only the old and new selected
+-- rows and the results header. Returns false when the caller must render instead.
+function M.select(s, id)
+  local old = s.selected
+  s.selected = id
+  if not sessions.owns(s) or s.rendering or not M.layout_fresh(s) then
+    return false
+  end
+  local target = id and s.result_positions[id]
+  if not target then
+    return false
+  end
+  -- A previous selection inside a collapsed file has no row to clear.
+  local previous = old and s.result_positions[old]
+  local rows = { [target.row] = true }
+  if previous then
+    rows[previous.row] = true
+  end
+  s.rendering = true
+  local cursors = {}
+  for _, win in ipairs(vim.fn.win_findbuf(s.buf)) do
+    cursors[win] = vim.api.nvim_win_get_cursor(win)
+  end
+  vim.api.nvim_buf_call(s.buf, function()
+    for row in pairs(rows) do
+      local line = vim.api.nvim_buf_get_lines(s.buf, row - 1, row, false)[1]
+      local selected = row == target.row
+      s.result_rows[row] = selected and id or s.result_occurrences[row][1].id
+      pcall(vim.cmd, 'undojoin')
+      vim.api.nvim_buf_set_lines(s.buf, row - 1, row, false, {
+        (selected and '> ' or '  ') .. line:sub(3),
+      })
+    end
+    local header = s.results_header_row
+    pcall(vim.cmd, 'undojoin')
+    vim.api.nvim_buf_set_lines(s.buf, header, header + 1, false, { results.header(s) })
+  end)
+  for win, cursor in pairs(cursors) do
+    vim.api.nvim_win_set_cursor(win, cursor)
+  end
+  vim.bo[s.buf].modified = false
+  s.rendered.tick = vim.api.nvim_buf_get_changedtick(s.buf)
+  s.rendering = false
+  -- Replacing a line moves its extmarks, including the cursor marker.
+  M.update_cursor_marker(s)
+  return true
 end
 
 function M.request_render(s)
@@ -536,7 +668,8 @@ local function register_events(s)
     group = group,
     buffer = s.buf,
     callback = function()
-      if not s.rendering then
+      -- An unchanged tick means the last change was a render or selection patch.
+      if not s.rendering and not M.layout_fresh(s) then
         require('searchlight')._synchronize(s, 'native')
         M.request_render(s)
       end
@@ -549,8 +682,7 @@ local function register_events(s)
       if not s.rendering and sessions.owns(s) then
         M.update_cursor_marker(s)
         local id = results.at_cursor(s, vim.api.nvim_win_get_cursor(0))
-        if id and id ~= s.selected then
-          s.selected = id
+        if id and id ~= s.selected and not M.select(s, id) then
           M.request_render(s)
         end
       end

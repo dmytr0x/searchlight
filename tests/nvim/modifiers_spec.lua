@@ -48,7 +48,7 @@ H.test(
       H.eq(actual, expected)
       -- Verify the visible highlight, rather than just the internal result count.
       local highlighted = {}
-      local marks = vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true })
+      local marks = view.decorations(s)
       for _, mark in ipairs(marks) do
         local row, col, details = mark[2], mark[3], mark[4]
         if

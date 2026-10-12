@@ -212,12 +212,14 @@ function M.header(s)
   return string.format('[Results]  %d/%d', index or 0, #s.results)
 end
 
-function M.render(s, add, highlights)
+-- Builds result rows and the per-row arrays the view draws decorations from.
+function M.render(s, add)
   local stamp, mapped = 0, 0
   local function mix(value)
     stamp = (stamp * 31 + value) % 2147483647
   end
   local rows, occurrences, positions, headers, file_rows, markers = {}, {}, {}, {}, {}, {}
+  local gutters, header_spans = {}, {}
   local layout = geometry(s)
   for file_index, file in ipairs(layout) do
     local path = file.path
@@ -232,30 +234,9 @@ function M.render(s, add, highlights)
     local header_text = heading .. (directory ~= '' and '  ' .. directory or '')
     local header = add(header_text)
     headers[path], file_rows[header + 1] = header + 1, path
+    header_spans[header + 1] = { #header_text, #heading, #directory }
     -- Zero-based first code row (the existing file_headers index is one-based).
     file.row = header + 1
-    table.insert(highlights, {
-      row = header,
-      start = 0,
-      stop = #header_text,
-      group = 'CursorLine',
-      hl_eol = true,
-      priority = 90,
-    })
-    table.insert(highlights, {
-      row = header,
-      start = 0,
-      stop = #heading,
-      group = 'Title',
-    })
-    if directory ~= '' then
-      table.insert(highlights, {
-        row = header,
-        start = #heading + 2,
-        stop = #heading + 2 + #directory,
-        group = 'SearchlightPath',
-      })
-    end
     if not collapsed then
       mix(tonumber(s.results[file.first].snapshot.hash:sub(1, 8), 16))
       code_rows(s.results, file.first, file.last, function(line, text, line_matches, width)
@@ -274,21 +255,9 @@ function M.render(s, add, highlights)
         mix(#prefix)
         mix(#text)
         mapped = mapped + 1
-        table.insert(highlights, {
-          row = row,
-          start = 0,
-          stop = #prefix,
-          group = 'LineNr',
-        })
+        gutters[row + 1] = #prefix
         if state == '○   ' then
           markers[row + 1] = 2
-          table.insert(highlights, {
-            row = row,
-            start = 2,
-            stop = 2 + #'○',
-            group = 'SearchlightMarker',
-            priority = 2001,
-          })
         end
         if line_matches then
           rows[row + 1] = line_matches[1].id
@@ -299,21 +268,14 @@ function M.render(s, add, highlights)
               col = #prefix + result.start,
               stop = #prefix + result.finish,
               id = result.id,
+              -- Stale snapshots keep their match colors and circle markers.
+              disabled = not result.enabled or nil,
             }
             positions[result.id] = position
             table.insert(occurrences[row + 1], position)
             if result.id == s.selected then
               rows[row + 1] = result.id
             end
-            table.insert(highlights, {
-              row = row,
-              start = position.col,
-              stop = position.stop,
-              -- Stale snapshots keep their match colors and circle markers.
-              group = not result.enabled and 'Comment'
-                or result.id == s.selected and 'IncSearch'
-                or 'Search',
-            })
           end
         end
       end)
@@ -324,7 +286,7 @@ function M.render(s, add, highlights)
   end
   s.result_rows, s.result_occurrences, s.result_positions = rows, occurrences, positions
   s.file_headers, s.file_rows = headers, file_rows
-  s.result_markers = markers
+  s.result_markers, s.result_gutters, s.file_header_spans = markers, gutters, header_spans
   local key = stamp .. ':' .. mapped
   if s.layout_key ~= key or s.layout_invalid then
     s.layout_revision = (s.layout_revision or 0) + 1
