@@ -46,7 +46,6 @@ local function bounds()
   for _, key in ipairs({
     'parsers',
     'retained_bytes',
-    'managed_bytes',
     'spans',
     'rows',
     'blocks',
@@ -363,9 +362,33 @@ H.test(
     syntax._test.reset()
     H.eq(syntax.diagnostics().parsers, 0)
     H.eq(syntax.diagnostics().retained_bytes, 0)
-    H.eq(syntax.diagnostics().managed_bytes, 0)
   end
 )
+
+H.test('large result sets still color the middle of the panel', 'Syntax,Budgets', function()
+  syntax._test.reset()
+  local a = H.fixture()
+  for i = 1, 3 do
+    H.write(a .. '/' .. i .. '.lua', string.rep('abc=1\n', 16667))
+  end
+  local s = p.new(a)
+  s.config.max_results = 100000
+  s.config.max_output_bytes = 64 * 1024 * 1024
+  H.update(s, { query = 'abc', context = 0 })
+  H.eq(#s.results, 50001)
+  view.render(s)
+  local rows = vim.api.nvim_buf_line_count(s.buf)
+  vim.api.nvim_win_set_cursor(0, { math.floor(rows / 2), 0 })
+  vim.cmd('normal! zt')
+  settled()
+  local middle = false
+  for _, span in ipairs(spans()) do
+    middle = middle or span[1] > 1000
+  end
+  assert(middle, 'no spans in the middle of the panel')
+  bounds()
+  syntax._test.reset()
+end)
 
 local function fake(options)
   options = options or {}
@@ -547,7 +570,6 @@ H.test(
     syntax._test.reset()
     H.eq(syntax.diagnostics().parsers, 0)
     H.eq(syntax.diagnostics().retained_bytes, 0)
-    H.eq(syntax.diagnostics().managed_bytes, 0)
   end
 )
 
@@ -781,7 +803,7 @@ H.test(
   end
 )
 
-H.test('span and bookkeeping admission include in-flight allocations', 'Syntax,Budgets', function()
+H.test('span admission includes in-flight allocations', 'Syntax,Budgets', function()
   local adapter = fake({ captures = 100 })
   adapter.now = function()
     return 0
@@ -794,11 +816,6 @@ H.test('span and bookkeeping admission include in-flight allocations', 'Syntax,B
   settled()
   H.eq(#spans(), 0, 'partial colors must be discarded on exhaustion')
   H.eq(syntax.diagnostics().spans, 0)
-  bounds()
-  syntax._test.reset(adapter, { managed_bytes = 1024 })
-  syntax.invalidate(s)
-  settled()
-  H.eq(syntax.diagnostics().parsers, 0)
   bounds()
   syntax._test.reset()
 end)
@@ -1021,8 +1038,6 @@ H.test(
       return original(session, first, last, emit, function()
         if not interrupted then
           interrupted = true
-          local d = syntax.diagnostics()
-          assert(d.managed_bytes > 512, 'mapper scratch was not reserved before mapping')
           bounds()
           vim.schedule(function()
             p.close(s)
@@ -1045,7 +1060,6 @@ H.test(
       H.eq(d.demands, 0)
       H.eq(d.rows, 0)
       H.eq(d.blocks, 0)
-      H.eq(d.managed_bytes, 0)
       H.eq(H.read(a .. '/one.lua'), string.rep('local abc = 42\n', 100))
       bounds()
     end, debug.traceback)
@@ -1121,7 +1135,6 @@ H.test(
     for _, name in ipairs({
       'parsers',
       'retained_bytes',
-      'managed_bytes',
       'spans',
       'blocks',
       'rows',

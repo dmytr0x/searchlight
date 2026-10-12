@@ -7,7 +7,6 @@ local limits = {
   source_bytes = 128 * 1024,
   parsers = 2,
   retained_bytes = 256 * 1024,
-  managed_bytes = 2 * 1024 * 1024,
   spans = 8192,
   rows = 256,
   blocks = 1024,
@@ -51,7 +50,6 @@ local MAP_WIDTH, SPAN_WIDTH = 6, 5
 local counters = {
   parsers = 0,
   retained_bytes = 0,
-  managed_bytes = 0,
   spans = 0,
   blocks = 0,
   rows = 0,
@@ -119,21 +117,10 @@ local function tick()
   cache.clock = cache.clock + 1
   return cache.clock
 end
-local function reserve(bytes)
-  if counters.managed_bytes + bytes > limits.managed_bytes then
-    return false
-  end
-  count('managed_bytes', bytes)
-  return true
-end
-local function release(bytes)
-  counters.managed_bytes = counters.managed_bytes - bytes
-end
 local function remove_record(records, name, key)
   if records[key] then
     records[key] = nil
     counters[name] = counters[name] - 1
-    release(512)
   end
 end
 local function clear_records(records, name)
@@ -144,10 +131,8 @@ end
 local function release_language(lang)
   cache.languages[lang] = nil
   counters.languages = counters.languages - 1
-  release(256)
 end
 local function release_groups()
-  release(#cache.groups * 512)
   cache.groups, cache.group_ids = {}, {}
   counters.groups = 0
 end
@@ -179,9 +164,6 @@ local function record(records, name, key, cooldown)
       end
       remove_record(records, name, oldest)
     end
-    if not reserve(512) then
-      return
-    end
     count(name, 1)
   end
   records[key] = { tick(), cooldown and now() + cooldown or math.huge }
@@ -209,20 +191,11 @@ local function backoff(key)
     adapter.defer(delay, retry)
   end
 end
-local function release_mapper(d)
-  if d.scratch then
-    release(d.scratch)
-    d.scratch = nil
-  end
-  d.mapper = nil
-end
 local function drop_demand(win)
   local d = viewport.demands[win]
   if not d then
     return
   end
-  release_mapper(d)
-  release(d.bytes)
   counters.blocks = counters.blocks - #d.maps / MAP_WIDTH
   counters.rows = counters.rows - d.rows
   counters.demands = counters.demands - 1
@@ -248,7 +221,6 @@ end
 local function release_chunk(chunk)
   counters.spans = counters.spans - #chunk.spans / SPAN_WIDTH
   counters.chunks = counters.chunks - 1
-  release(256 + #chunk.spans / SPAN_WIDTH * 128)
 end
 local function remove_chunk(e, first)
   if e.chunks[first] then
@@ -284,7 +256,6 @@ local function evict(key)
   end
   clear_chunks(e)
   release_parser(e)
-  release(2048)
   cache.entries[key] = nil
   e.parser, e.tree, e.query, e.text, e.chunks = nil, nil, nil, nil, nil
   return true
@@ -341,7 +312,7 @@ local function intern(name)
   if cache.group_ids[name] then
     return cache.group_ids[name]
   end
-  if #name > 256 or #cache.groups >= limits.groups or not reserve(512) then
+  if #name > 256 or #cache.groups >= limits.groups then
     return nil
   end
   local id = #cache.groups + 1
@@ -436,16 +407,12 @@ local function admit(snapshot, lang, key)
   while
     counters.parsers >= limits.parsers
     or counters.retained_bytes + #snapshot.text > limits.retained_bytes
-    or counters.managed_bytes + (e and 0 or 2048) > limits.managed_bytes
   do
     if not evict_inactive() and not release_inactive_parser(key) then
       return
     end
   end
   if not e then
-    if not reserve(2048) then
-      return
-    end
     e = { key = key, lang = lang, chunks = {} }
     cache.entries[key] = e
   end
@@ -453,11 +420,6 @@ local function admit(snapshot, lang, key)
   reserve_parser(e, snapshot.text)
   local new_language = not cache.languages[lang]
   if new_language then
-    if not reserve(256) then
-      e.active = false
-      evict(key)
-      return
-    end
     cache.languages[lang] = true
     count('languages', 1)
   end
@@ -495,7 +457,7 @@ local function chunk_for(e, line)
   end
 end
 local function reserve_chunk(lines, first)
-  if counters.chunks >= limits.chunks or not reserve(256) then
+  if counters.chunks >= limits.chunks then
     return
   end
   count('chunks', 1)
@@ -522,7 +484,6 @@ local function drop_lines(chunk, line)
   end
   local removed = (total - kept) / SPAN_WIDTH
   counters.spans = counters.spans - removed
-  release(removed * 128)
 end
 local function publish_chunk(e, first, chunk)
   local spans = chunk.spans
@@ -584,7 +545,7 @@ local function extract(e, snapshot, first, last)
           local left = line == sr + 1 and math.max(0, sc) or 0
           local right = math.min(length, line == er + 1 and ec or length)
           if length <= limits.line_bytes and right > left then
-            if counters.spans >= limits.spans or not reserve(128) then
+            if counters.spans >= limits.spans then
               error(BUDGET)
             end
             count('spans', 1)
@@ -677,26 +638,23 @@ local function collect()
     then
       drop_demand(win)
       viewport.serial = viewport.serial + 1
-      if reserve(512) then
-        viewport.demands[win] = {
-          win = win,
-          focused = win == focused,
-          id = s.id,
-          generation = s.generation,
-          layout = s.layout_revision,
-          first = first,
-          last = last,
-          maps = {},
-          rows = 0,
-          bytes = 512,
-          serial = viewport.serial,
-          mapped = false,
-          done = false,
-          next_map = 1,
-          next_line = 0,
-        }
-        count('demands', 1)
-      end
+      viewport.demands[win] = {
+        win = win,
+        focused = win == focused,
+        id = s.id,
+        generation = s.generation,
+        layout = s.layout_revision,
+        first = first,
+        last = last,
+        maps = {},
+        rows = 0,
+        serial = viewport.serial,
+        mapped = false,
+        done = false,
+        next_map = 1,
+        next_line = 0,
+      }
+      count('demands', 1)
     end
   end
   trim_spans()
@@ -740,14 +698,7 @@ end
 
 local function map_demand(s, d, started)
   if not d.mapper then
-    -- Bound and account for temporary sorting/layout arrays before deriving mappings.
-    local scratch = #s.results * 64 + limits.rows * 64
-    if not reserve(scratch) then
-      d.done = true
-      schedule_worker()
-      return
-    end
-    d.scratch = scratch
+    -- Streams result mappings; at most limits.rows rows are kept.
     d.mapper = coroutine.create(function()
       local previous_snapshot, key
       results.mappings(s, d.first, d.last, function(row, snapshot, line, col, length)
@@ -774,16 +725,13 @@ local function map_demand(s, d, started)
         if not key then
           return
         end
-        local n, cost = #d.maps, 32
+        local n = #d.maps
         local extend = n > 0
           and d.maps[n] == key
           and d.maps[n - 3] == col
           and d.maps[n - 5] + #d.maps[n - 2] == row
           and d.maps[n - 4] + #d.maps[n - 2] == line
-        if not extend then
-          cost = cost + 256 + #snapshot.path + #key
-        end
-        if (extend or counters.blocks < limits.blocks) and reserve(cost) then
+        if extend or counters.blocks < limits.blocks then
           if extend then
             local lengths = d.maps[n - 2]
             lengths[#lengths + 1] = length
@@ -792,7 +740,7 @@ local function map_demand(s, d, started)
               row, line, col, { length }, snapshot.path, key
             count('blocks', 1)
           end
-          d.bytes, d.rows = d.bytes + cost, d.rows + 1
+          d.rows = d.rows + 1
           count('rows', 1)
         end
       end, function()
@@ -806,8 +754,7 @@ local function map_demand(s, d, started)
   d.batch_started = started
   local ok = coroutine.resume(d.mapper)
   if not ok or coroutine.status(d.mapper) == 'dead' then
-    release_mapper(d)
-    d.mapped = true
+    d.mapper, d.mapped = nil, true
   end
   counters.max_batch_ms = math.max(counters.max_batch_ms, now() - started)
   schedule_worker()

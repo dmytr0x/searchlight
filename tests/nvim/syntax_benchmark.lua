@@ -24,7 +24,6 @@ local function measure_memory()
   for _, name in ipairs({
     'parsers',
     'retained_bytes',
-    'managed_bytes',
     'spans',
     'rows',
     'blocks',
@@ -231,7 +230,6 @@ local ok, err = xpcall(function()
   local clean = syntax.diagnostics()
   H.eq(clean.parsers, 0)
   H.eq(clean.spans, 0)
-  H.eq(clean.managed_bytes, 0)
   local output = {
     enabled = enabled,
     first_results_ms = first_results,
