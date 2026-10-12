@@ -43,17 +43,19 @@ end
 
 -- Fail closed on unknown configuration: discovery and stdin must agree on their semantics.
 -- Match flags are intentionally normalized by the panel's explicit controls.
-function M.config_error(ignored)
+-- Returns the inventory-relevant settings ({ follow = boolean }), or nil and an error.
+function M.config(ignored)
+  local settings = { follow = false }
   if ignored then
-    return
+    return settings
   end
   local path = vim.env.RIPGREP_CONFIG_PATH
   if not path or path == '' then
-    return
+    return settings
   end
   local fd = io.open(path, 'r')
   if not fd then
-    return 'Cannot read RIPGREP_CONFIG_PATH: ' .. path
+    return nil, 'Cannot read RIPGREP_CONFIG_PATH: ' .. path
   end
   local args = fd:read('*a')
   fd:close()
@@ -96,15 +98,20 @@ function M.config_error(ignored)
         key = line:match('^%-%-([%w-]+)$')
       end
       if not key or not (simple[key] and not value or with_value[key] and value) then
-        return 'Unsupported ripgrep config argument: '
-          .. line
-          .. ' (use Also ignored or a supported config)'
+        return nil,
+          'Unsupported ripgrep config argument: '
+            .. line
+            .. ' (use Also ignored or a supported config)'
       end
       if key == 'ignore-file' and value:sub(1, 1) ~= '/' then
-        return 'Relative --ignore-file in ripgrep config is unsupported; use an absolute path'
+        return nil, 'Relative --ignore-file in ripgrep config is unsupported; use an absolute path'
+      end
+      if key == 'follow' or key == 'no-follow' then
+        settings.follow = key == 'follow'
       end
     end
   end
+  return settings
 end
 
 -- Split declarations without consuming commas belonging to ripgrep glob syntax.
@@ -240,28 +247,44 @@ function M.decode_sensitive(paths)
     '--encoding=utf-8', '--regexp=\\r', '--regexp=\\x{FFFD}', '--' }, paths)
 end
 
--- Streaming JSON decoder, bounded even if the child never sends a newline.
-function M.decoder(on_item, limit)
+-- Streaming splitter for `sep`-terminated records, bounded even if the child never
+-- sends `sep`. With `final`, returns and clears the unterminated tail.
+function M.split(sep, on_record, limit)
   local carry = ''
   return function(chunk, final)
-    carry = carry .. (chunk or '')
-    if #carry > limit then
+    local buf = carry .. (chunk or '')
+    if #buf > limit then
       error('ripgrep output exceeds queue byte limit')
     end
+    local start = 1
     while true do
-      local pos = carry:find('\n', 1, true)
+      local pos = buf:find(sep, start, true)
       if not pos then
         break
       end
-      local line = carry:sub(1, pos - 1)
-      carry = carry:sub(pos + 1)
-      if line ~= '' then
-        on_item(vim.json.decode(line))
-      end
+      on_record(buf:sub(start, pos - 1))
+      start = pos + 1
     end
-    if final and carry ~= '' then
-      on_item(vim.json.decode(carry))
+    carry = buf:sub(start)
+    if final then
+      local tail = carry
       carry = ''
+      return tail
+    end
+  end
+end
+
+-- Streaming JSON decoder; the final record may lack a newline.
+function M.decoder(on_item, limit)
+  local split = M.split('\n', function(line)
+    if line ~= '' then
+      on_item(vim.json.decode(line))
+    end
+  end, limit)
+  return function(chunk, final)
+    local tail = split(chunk, final)
+    if tail and tail ~= '' then
+      on_item(vim.json.decode(tail))
     end
   end
 end

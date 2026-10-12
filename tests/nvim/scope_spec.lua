@@ -248,3 +248,39 @@ H.test(
     assert(not vim.uv.fs_stat(a .. '/new'))
   end
 )
+H.test(
+  'symlinked files and directories are listed only with --follow, under canonical paths',
+  '4.5,B-02',
+  function()
+    local a = H.fixture()
+    H.write(a .. '/.ignore', 'target/\n')
+    H.write(a .. '/target/one', 'abc\n')
+    H.write(a .. '/target/dir/two', 'abc\n')
+    assert(vim.uv.fs_symlink(a .. '/target/one', a .. '/link_one'))
+    assert(vim.uv.fs_symlink(a .. '/target/dir', a .. '/link_dir'))
+    local s = H.search(a)
+    H.eq(#s.results, 0)
+    H.write(H.root .. '/rgconfig', '--follow\n')
+    H.update(s, {})
+    local paths = vim.tbl_map(function(r)
+      return r.path
+    end, s.results)
+    table.sort(paths)
+    H.eq(paths, { a .. '/target/dir/two', a .. '/target/one' })
+  end
+)
+H.test('a symlinked root reports sources under its canonical path', '4.5', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc\n')
+  assert(vim.uv.fs_symlink(a, H.root .. '/alias'))
+  H.eq(H.search(H.root .. '/alias').results[1].path, a .. '/one')
+  -- On macOS /tmp is itself a symlink to /private/tmp.
+  local tmp = vim.uv.fs_mkdtemp('/tmp/searchlight-XXXXXX')
+  if tmp then
+    H.write(tmp .. '/one', 'abc\n')
+    local ok, s = pcall(H.search, tmp)
+    vim.fn.delete(tmp, 'rf')
+    assert(ok, s)
+    H.eq(s.results[1].path, vim.uv.fs_realpath(tmp) .. '/one')
+  end
+end)

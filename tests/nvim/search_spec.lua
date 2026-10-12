@@ -233,6 +233,25 @@ H.test('fragmented JSON and base64 byte values decode losslessly', 'Async,R-01',
   H.eq(rg.value(records[1].data.lines), '\255abc')
   H.eq(pcall(decode, string.rep('x', 1025), false), false)
 end)
+H.test('split keeps records cut across chunk boundaries at every offset', 'Async', function()
+  local text = 'one\0two\0three\0'
+  for i = 0, #text do
+    for j = i, #text do
+      local records = {}
+      local split = rg.split('\0', function(record)
+        table.insert(records, record)
+      end, 1024)
+      split(text:sub(1, i), false)
+      split(text:sub(i + 1, j), false)
+      split(text:sub(j + 1), false)
+      H.eq(split(nil, true), '')
+      H.eq(records, { 'one', 'two', 'three' }, 'cut at ' .. i .. ',' .. j)
+    end
+  end
+  local split = rg.split('\0', function() end, 1024)
+  split('one\0tw', false)
+  H.eq(split(nil, true), 'tw')
+end)
 H.test('capped results block Replace all but allow validated Replace next', 'R-04,Async', function()
   local a = H.fixture()
   H.write(a .. '/one', 'abc abc abc abc\n')

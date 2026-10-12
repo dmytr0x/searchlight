@@ -197,11 +197,12 @@ local function prepare_run(s, gen)
     fail(s, gen, cap.reason)
     return
   end
-  local config_error = rg.config_error(request.options.ignored)
-  if config_error then
+  local settings, config_error = rg.config(request.options.ignored)
+  if not settings then
     fail(s, gen, config_error)
     return
   end
+  request.follow = settings.follow
   local ok, argv = pcall(rg.inventory, request)
   if not ok then
     fail(s, gen, tostring(argv))
@@ -217,7 +218,12 @@ local function prepare_run(s, gen)
     fail(s, gen, tostring(buffers))
     return
   end
-  local inventory = { eligible = {}, identities = {}, preferred = {}, count = 0, carry = '' }
+  local inventory = { eligible = {}, identities = {}, preferred = {}, count = 0,
+    pending = {}, head = 1, tail = 0 }
+  inventory.split = rg.split('\0', function(rel)
+    inventory.tail = inventory.tail + 1
+    inventory.pending[inventory.tail] = rel
+  end, request.config.max_output_bytes)
   for _, buffer in ipairs(buffers) do
     inventory.preferred[scope.identity(buffer.path)] = buffer.path
   end
@@ -227,34 +233,82 @@ local function prepare_run(s, gen)
     exclusions = {}, snapshot_bytes = 0 }
 end
 
-local function decode_inventory(run, data)
+local function admit_path(run, rel)
   local inventory, request = run.inventory, run.request
-  inventory.carry = inventory.carry .. data
-  if #inventory.carry > request.config.max_output_bytes then
-    error('Inventory exceeds queue byte limit')
+  rel = rel:gsub('^%./', '')
+  local path = (request.root == '/' and '' or request.root) .. '/' .. rel
+  -- Without --follow, ripgrep lists no symlinks, so a path under the canonical root
+  -- is already canonical.
+  if request.follow then
+    path = scope.path(path)
   end
-  while true do
-    local pos = inventory.carry:find('\0', 1, true)
-    if not pos then
-      break
+  local identity = scope.identity(path)
+  path = inventory.preferred[identity] or path
+  if
+    scope.contains(request.root, path)
+    and not scope.metadata(request.root, path)
+    and not inventory.identities[identity]
+  then
+    inventory.identities[identity] = true
+    inventory.eligible[path] = true
+    inventory.count = inventory.count + 1
+    if inventory.count > request.config.max_files then
+      error('File inventory cap reached; increase max_files and refresh')
     end
-    local rel = inventory.carry:sub(1, pos - 1):gsub('^%./', '')
-    inventory.carry = inventory.carry:sub(pos + 1)
-    local path = scope.path(request.root .. '/' .. rel)
-    local identity = scope.identity(path)
-    path = inventory.preferred[identity] or path
-    if
-      scope.contains(request.root, path)
-      and not scope.metadata(request.root, path)
-      and not inventory.identities[identity]
-    then
-      inventory.identities[identity] = true
-      inventory.eligible[path] = true
-      inventory.count = inventory.count + 1
-      if inventory.count > request.config.max_files then
-        error('File inventory cap reached; increase max_files and refresh')
-      end
+  end
+end
+
+-- Paths admitted per main-loop step, so large inventories do not block input.
+local inventory_batch = 5000
+
+local pump_inventory
+local function schedule_inventory(run)
+  if not run.inventory.scheduled then
+    run.inventory.scheduled = true
+    vim.schedule(function()
+      pump_inventory(run)
+    end)
+  end
+end
+
+pump_inventory = function(run)
+  local s, gen, inventory = run.session, run.generation, run.inventory
+  inventory.scheduled = false
+  if not current(s, gen) or s.status ~= 'searching' then
+    return
+  end
+  local ok, err = pcall(function()
+    local last = math.min(inventory.head + inventory_batch - 1, inventory.tail)
+    for i = inventory.head, last do
+      local rel = inventory.pending[i]
+      inventory.pending[i] = nil
+      inventory.head = i + 1
+      admit_path(run, rel)
     end
+  end)
+  if not ok then
+    fail(s, gen, tostring(err))
+  elseif inventory.head <= inventory.tail then
+    schedule_inventory(run)
+  elseif inventory.drained then
+    local drained = inventory.drained
+    inventory.drained = nil
+    drained()
+  end
+end
+
+local function decode_inventory(run, data)
+  run.inventory.split(data, false)
+  schedule_inventory(run)
+end
+
+-- Calls `done` once every decoded path is admitted.
+local function drain_inventory(run, done)
+  local inventory = run.inventory
+  if inventory.head > inventory.tail and not inventory.scheduled then
+    done()
+  else
+    inventory.drained = done
   end
 end
 
@@ -596,11 +650,13 @@ local function check_new_names(run)
       fail(s, gen, shadow_stderr)
       return
     end
-    if run.inventory.carry ~= '' then
+    if run.inventory.split(nil, true) ~= '' then
       fail(s, gen, 'Unterminated new-buffer inventory')
       return
     end
-    begin_matching(run)
+    drain_inventory(run, function()
+      begin_matching(run)
+    end)
   end, function()
     scope.cleanup(shadow)
   end)
@@ -613,10 +669,12 @@ local function collect_inventory(run)
   end, function(out, stderr)
     if out.code ~= 0 and out.code ~= 1 then
       fail(s, gen, stderr ~= '' and stderr or 'File inventory failed')
-    elseif run.inventory.carry ~= '' then
+    elseif run.inventory.split(nil, true) ~= '' then
       fail(s, gen, 'Unterminated ripgrep inventory')
     else
-      check_new_names(run)
+      drain_inventory(run, function()
+        check_new_names(run)
+      end)
     end
   end)
 end
