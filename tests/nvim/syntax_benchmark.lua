@@ -4,7 +4,7 @@ local p = require('searchlight')
 local view = require('searchlight.view')
 local syntax = require('searchlight.highlight')
 local enabled = vim.env.SEARCHLIGHT_SYNTAX == '1'
-p.setup({ debounce_ms = 10, syntax_highlighting = enabled })
+p.setup({ debounce_ms = 10, syntax_highlighting = enabled, syntax_injections = enabled })
 local root = H.fixture()
 local samples, first_results, navigation, drawing, scrolling, memory = {}, {}, {}, {}, {}, {}
 local heartbeat_gaps = {}
@@ -179,6 +179,36 @@ local ok, err = xpcall(function()
     p.close(panel)
     settled()
   end
+
+  -- Embedded languages: Lua blocks in help buffers and fenced code in Markdown.
+  local docs = root .. '/docs'
+  for _, name in ipairs({
+    'change.txt',
+    'autocmd.txt',
+    'treesitter.txt',
+    'diagnostic.txt',
+    'api-ui-events.txt',
+  }) do
+    H.write(docs .. '/' .. name, H.read(vim.env.VIMRUNTIME .. '/doc/' .. name))
+    H.buffer(docs .. '/' .. name, nil, { filetype = 'help' })
+  end
+  H.write(
+    docs .. '/fences.md',
+    string.rep('# vim\n\n```lua\nlocal vim = vim.api\n```\n\n```c\nint vim = 1;\n```\n\n', 400)
+  )
+  local panel = search(docs, { query = 'vim', context = 2 })
+  for i = 1, 30 do
+    local position = panel.result_positions[panel.results[1 + (i * 97) % #panel.results].id]
+    vim.api.nvim_win_set_cursor(0, { position.row, position.col })
+    vim.cmd('normal! zt')
+    vim.cmd('redraw!')
+    settled()
+  end
+  if enabled then
+    assert(syntax.diagnostics().languages > 3, 'injected languages were not exercised')
+  end
+  p.close(panel)
+  settled()
 
   local cycles = root .. '/cycles'
   H.write(cycles .. '/one.lua', 'local abc = "abc"\nreturn abc\n')

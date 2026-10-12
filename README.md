@@ -311,6 +311,7 @@ require('searchlight').setup({
   also_search_ignored_files = false,
   context_size = 2,
   syntax_highlighting = true,
+  syntax_injections = false,
   debounce_ms = 150,
   max_results = 10000,
   concurrency = 4,
@@ -351,8 +352,13 @@ memory; these count limits are not an RSS guarantee. At most eight new languages
 admitted; unsupported lookup and failure records are separately bounded. Missing
 parsers, query errors and filetype lookup errors suppress a file for 30 seconds. Parse
 timeouts and exhausted budgets retry automatically after 1, 2, 4… seconds (at most 30),
-without waiting for a scroll. Embedded language injections are currently disabled
-pending measurements; parent-language colors still work (including Markdown).
+without waiting for a scroll.
+
+`setup({ syntax_injections = true })` also colors embedded languages, such as Markdown
+code fences and `>lua` blocks in loaded help buffers. Only injections that intersect a
+visible chunk are parsed, one level deep. Injected languages share the eight-language
+and capture budgets. A chunk whose embedded language is refused keeps parent colors
+only. Injections are off by default until their scrolling cost meets the benchmark gates.
 
 Colorscheme changes redraw existing colors. Source filetype changes update colors
 without rerunning searches. After explicitly replacing highlight queries, call

@@ -763,23 +763,128 @@ H.test(
   end
 )
 
-H.test(
-  'parent Markdown syntax stays bounded without admitting embedded languages',
-  'Syntax,Injections',
-  function()
+-- Groups of every span on 1-based source `line`, with their priority ranks.
+local function line_groups(line)
+  local names = {}
+  for name, id in pairs(syntax._test.groups()) do
+    names[id] = name
+  end
+  local found = {}
+  for _, span in ipairs(spans()) do
+    if span[1] == line then
+      found[#found + 1] = { group = names[span[4]], rank = span[5] }
+    end
+  end
+  return found
+end
+
+local function has_lua(groups)
+  for _, item in ipairs(groups) do
+    if item.group:match('%.lua$') then
+      return true
+    end
+  end
+  return false
+end
+
+local function with_injections(run)
+  p.setup({ syntax_injections = true })
+  local ok, err = pcall(run)
+  p.setup({ syntax_injections = false })
+  syntax._test.reset()
+  assert(ok, err)
+end
+
+H.test('Markdown fences get injected Lua captures above the parent', 'Syntax,Injections', function()
+  with_injections(function()
     syntax._test.reset()
     local a = H.fixture()
-    H.write(a .. '/one.md', '# abc\n\n```python\nabc = "text"\n```\n')
+    H.write(a .. '/one.md', '# abc\n\n```lua\nlocal abc = 1\n```\n')
     local s = H.search(a)
     view.render(s)
     show_results(s)
     settled()
-    H.eq(syntax.diagnostics().languages, 1)
-    H.eq(syntax.diagnostics().parsers, 1)
-    for _, entry in pairs(syntax._test.entries()) do
-      H.eq(entry.lang, 'markdown')
+    local groups, keyword, parent = line_groups(4), nil, 0
+    for _, item in ipairs(groups) do
+      if item.group == '@keyword.lua' then
+        keyword = item.rank
+      elseif item.group:match('%.markdown$') then
+        parent = math.max(parent, item.rank)
+      end
     end
+    assert(keyword, 'no Lua keyword: ' .. vim.inspect(groups))
+    assert(keyword > parent, 'parent capture outranks injection: ' .. vim.inspect(groups))
+    assert(not has_lua(line_groups(1)), 'Lua captures outside the fence')
+    H.eq(syntax.diagnostics().parsers, 1)
     bounds()
+  end)
+end)
+
+H.test(
+  'an injected language over the language budget keeps parent colors only',
+  'Syntax,Injections,Budgets',
+  function()
+    with_injections(function()
+      syntax._test.reset(nil, { languages = 2 })
+      local a = H.fixture()
+      H.write(a .. '/one.md', '# abc\n\n```lua\nlocal abc = 1\n```\n')
+      local s = H.search(a)
+      view.render(s)
+      show_results(s)
+      settled()
+      local groups = line_groups(4)
+      assert(#groups > 0, 'parent colors are missing')
+      assert(not has_lua(groups), 'unadmitted language was extracted: ' .. vim.inspect(groups))
+      H.eq(syntax.diagnostics().languages, 2)
+      bounds()
+    end)
+  end
+)
+
+H.test(
+  'help Lua blocks get injected captures and other chunks run no injected query',
+  'Syntax,Injections',
+  function()
+    with_injections(function()
+      local calls = 0
+      syntax._test.reset({
+        language = function()
+          return 'vimdoc'
+        end,
+        query = function(lang)
+          local query = vim.treesitter.query.get(lang, 'highlights')
+          if lang ~= 'lua' then
+            return query
+          end
+          return setmetatable({
+            iter_captures = function(_, ...)
+              calls = calls + 1
+              return query:iter_captures(...)
+            end,
+          }, { __index = query })
+        end,
+      })
+      local a = H.fixture()
+      H.write(
+        a .. '/one.txt',
+        '*one.txt*  abc\n\nIntro |link|.\n\n\n\n>lua\n    local abc = 1\n<\n'
+      )
+      local s = H.search(a, { query = 'Intro', context = 0 })
+      view.render(s)
+      show_results(s)
+      settled()
+      assert(#line_groups(3) > 0, 'parent colors are missing')
+      H.eq(calls, 0)
+      p.close(s)
+      s = H.search(a, { query = 'abc', context = 0 })
+      view.render(s)
+      show_results(s)
+      settled()
+      assert(calls > 0)
+      assert(has_lua(line_groups(8)), 'no Lua captures: ' .. vim.inspect(line_groups(8)))
+      assert(not has_lua(line_groups(1)), 'Lua captures outside the block')
+      bounds()
+    end)
   end
 )
 

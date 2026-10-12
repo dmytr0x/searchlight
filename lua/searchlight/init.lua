@@ -8,6 +8,7 @@ local observe = require('searchlight.observe')
 local M = {
   config = vim.tbl_extend('force', input.defaults, {
     syntax_highlighting = true,
+    syntax_injections = false,
     debounce_ms = 150,
     max_results = 10000,
     concurrency = 4,

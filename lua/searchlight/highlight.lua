@@ -27,6 +27,8 @@ local cache = {
   failures = {},
   missing = {},
   languages = {},
+  -- Highlight queries of admitted injected languages.
+  queries = {},
   groups = {},
   group_ids = {},
   clock = 0,
@@ -100,9 +102,34 @@ local adapter = {
   load = function(lang)
     return vim.treesitter.language.add(lang)
   end,
+  injections = function(lang)
+    return vim.treesitter.query.get(lang, 'injections')
+  end,
+  -- Mirrors LanguageTree injection resolution: an alias names a language only with a parser.
+  resolve = function(alias)
+    alias = alias:gsub('%s+', ''):lower():gsub('%-', '_')
+    if alias:match('[%w_]+') ~= alias then
+      return
+    end
+    for _, lang in ipairs({ alias, vim.treesitter.language.get_lang(alias) }) do
+      if
+        vim._ts_has_language(lang)
+        or #vim.api.nvim_get_runtime_file('parser/' .. lang .. '.*', false) > 0
+      then
+        return lang
+      end
+    end
+  end,
   parser = function(text, lang)
-    -- parse(false) uses the parent tree only. Unverified injections must not load languages.
-    return vim.treesitter.get_string_parser(text, lang)
+    -- parse(false) uses the parent tree only. Empty child injection queries keep
+    -- injections one level deep, so only languages discovered in the parent can load.
+    return vim.treesitter.get_string_parser(text, lang, {
+      injections = setmetatable({}, {
+        __index = function(_, child)
+          return child ~= lang and '' or nil
+        end,
+      }),
+    })
   end,
   range = function(node, text, metadata)
     local r = vim.treesitter.get_range(node, text, metadata)
@@ -274,6 +301,7 @@ local function evict(key)
   release_parser(e)
   cache.entries[key] = nil
   e.parser, e.tree, e.query, e.text, e.chunks, e.lines = nil, nil, nil, nil, nil, nil
+  e.injections, e.combined = nil, nil
   return true
 end
 local function release_inactive_parser(except_key)
@@ -416,6 +444,39 @@ local function parse_entry(e)
     finish(err)
   end
 end
+-- Loads `lang` and its highlight query within the language budget; failures are
+-- recorded as missing. Returns the query.
+local function admit_language(lang)
+  if cache.queries[lang] then
+    return cache.queries[lang]
+  end
+  if
+    suppressed(cache.missing, lang)
+    or not cache.languages[lang] and counters.languages == limits.languages
+  then
+    return
+  end
+  local new_language = not cache.languages[lang]
+  if new_language then
+    cache.languages[lang] = true
+    count('languages', 1)
+  end
+  local loaded, available = pcall(adapter.load, lang)
+  if not loaded or not available then
+    if new_language then
+      release_language(lang)
+    end
+    record(cache.missing, 'missing', lang)
+    return
+  end
+  local ok, query = pcall(adapter.query, lang)
+  if not ok or not query then
+    record(cache.missing, 'missing', lang)
+    return
+  end
+  cache.queries[lang] = query
+  return query
+end
 local function admit(snapshot, lang, key)
   local e = cache.entries[key]
   if e and (e.tree or e.active) then
@@ -446,28 +507,15 @@ local function admit(snapshot, lang, key)
   end
   -- Reserve native parser/source capacity before query lookup or parser construction.
   reserve_parser(e, snapshot.text)
-  local new_language = not cache.languages[lang]
-  if new_language then
-    cache.languages[lang] = true
-    count('languages', 1)
-  end
-  local loaded, available = pcall(adapter.load, lang)
-  if not loaded or not available then
-    if new_language then
-      release_language(lang)
-    end
-    record(cache.missing, 'missing', lang)
-    e.active = false
-    evict(key)
-    return
-  end
-  local ok, query = pcall(adapter.query, lang)
+  local query = admit_language(lang)
   local parser_ok, parser = false, nil
-  if ok and query then
+  if query then
     parser_ok, parser = pcall(adapter.parser, e.text, lang)
   end
   if not parser_ok or not parser then
-    record(cache.missing, 'missing', lang)
+    if query then
+      record(cache.missing, 'missing', lang)
+    end
     e.active = false
     evict(key)
     return
@@ -554,10 +602,133 @@ local function publish_chunk(e, first, chunk, win)
   chunk.used = tick()
   redraw(win)
 end
+-- Languages that a range parse of lines [first, last] adds as children, or nil when the
+-- injection query cannot be read safely. Combined injections make Neovim scan the whole
+-- tree, so their languages are collected once for the whole source.
+local function injected_languages(e, first, last)
+  if e.injections == nil then
+    local ok, query = pcall(adapter.injections, e.lang)
+    e.injections = ok and query or false
+  end
+  local query = e.injections
+  if not query or #query.captures == 0 then
+    return {}
+  end
+  if e.combined then
+    return e.combined
+  end
+  local full = query.has_combined_injections
+  local start, stop
+  if not full then
+    start, stop = first - 1, last + 1
+  end
+  local langs, resolved = {}, {}
+  for _, match, metadata in query:iter_matches(e.tree:root(), e.text, start, stop) do
+    local alias = metadata['injection.language']
+    if metadata['injection.self'] ~= nil or metadata['injection.parent'] ~= nil then
+      -- A child of the parent's language would run the parent's injection query.
+      return
+    end
+    for id, nodes in pairs(match) do
+      local name = query.captures[id]
+      if name == 'injection.language' or name == 'injection.filename' then
+        alias = vim.treesitter.get_node_text(nodes[1], e.text, { metadata = metadata[id] })
+        if name == 'injection.filename' then
+          alias = vim.filetype.match({ filename = alias })
+        end
+      end
+    end
+    if alias and resolved[alias] == nil then
+      resolved[alias] = adapter.resolve(alias) or false
+    end
+    local lang = alias and resolved[alias]
+    if lang == e.lang then
+      return
+    elseif lang then
+      langs[lang] = true
+    end
+  end
+  if full then
+    e.combined = langs
+  end
+  return langs
+end
+-- Ensures injections intersecting lines [first, last] are parsed and returns the trees to
+-- extract: the parent tree, then injected trees of admitted languages. A newly seen
+-- language loads in its own tick. A language refused by the budget would still be loaded
+-- by the range parse, so the chunk keeps parent colors only. Sets progress.busy while a
+-- load or parse is pending.
+local function inject(e, first, last)
+  local trees = { { root = e.tree:root(), query = e.query, lang = e.lang, depth = 0 } }
+  local failure_key = e.key .. ':injections'
+  if suppressed(cache.failures, failure_key) then
+    return trees
+  end
+  local range = { first - 1, 0, last, 0 }
+  if not e.parser:is_valid(false, range) then
+    local ok, langs = pcall(injected_languages, e, first, last)
+    if not ok then
+      record(cache.failures, 'failures', failure_key, 30000)
+      return trees
+    elseif not langs then
+      return trees
+    end
+    for lang in pairs(langs) do
+      if not cache.queries[lang] and not suppressed(cache.missing, lang) then
+        if not cache.languages[lang] and counters.languages == limits.languages then
+          return trees
+        end
+        progress.busy = true
+        vim.schedule(function()
+          progress.busy = false
+          admit_language(lang)
+          schedule_worker()
+        end)
+        return trees
+      end
+    end
+    progress.busy, e.active = true, true
+    counters.parses = counters.parses + 1
+    local done = false
+    local function finish(err)
+      if done then
+        return
+      end
+      done, progress.busy, e.active = true, false, false
+      if err == 'TIMEOUT' then
+        backoff(failure_key)
+      elseif err then
+        record(cache.failures, 'failures', failure_key, 30000)
+      end
+      schedule_worker()
+    end
+    local parsed, err = pcall(e.parser.parse, e.parser, range, finish)
+    if not parsed then
+      finish(err)
+    end
+    if progress.busy or suppressed(cache.failures, failure_key) then
+      return trees
+    end
+  end
+  for lang, child in pairs(e.parser:children()) do
+    local query = cache.queries[lang]
+    if query then
+      for _, tree in pairs(child:trees()) do
+        local root = tree:root()
+        local sr, _, er = root:range()
+        if sr < last and er >= first - 1 then
+          trees[#trees + 1] = { root = root, query = query, lang = lang, depth = 1 }
+        end
+      end
+    end
+  end
+  return trees
+end
 local BUDGET = {}
--- Extracts one slice of the chunk starting at `first`. Budgets end a slice early and
--- publish the finished lines; returns true when the chunk needs no further work.
-local function extract(e, snapshot, first, last, win)
+-- Extracts one slice of the chunk starting at `first` from `trees` in order. Budgets end
+-- a slice early and publish the lines finished in every tree; returns true when the
+-- chunk needs no further work. Injected captures rank one priority above the parent.
+local function extract(e, snapshot, first, last, win, trees)
   local failure_key = e.key .. ':' .. first
   if suppressed(cache.failures, failure_key) then
     return true
@@ -571,41 +742,49 @@ local function extract(e, snapshot, first, last, win)
   local stop
   counters.extractions = counters.extractions + 1
   local ok, err = pcall(function()
-    for id, node, metadata in e.query:iter_captures(e.tree:root(), e.text, start - 1, last) do
-      metadata = metadata or {}
-      local capture = metadata[id] or {}
-      local sr, sc, er, ec = adapter.range(node, e.text, capture)
-      visited = visited + 1
-      -- Captures starting on the slice's first line always run, so every slice advances.
-      if sr + 1 > start and (visited > limits.captures or now() - started > limits.batch_ms) then
-        stop = sr + 1
-        return
-      end
-      high_water.captures = math.max(high_water.captures or 0, visited)
-      local name = e.query.captures[id]
-      if name and name:sub(1, 1) ~= '_' and not capture.conceal and not metadata.conceal then
-        local group = intern('@' .. name .. '.' .. e.lang)
-        if not group then
-          error(BUDGET)
+    for _, tree in ipairs(trees) do
+      for id, node, metadata in
+        tree.query:iter_captures(tree.root, e.text, start - 1, stop and stop - 1 or last)
+      do
+        metadata = metadata or {}
+        local capture = metadata[id] or {}
+        local sr, sc, er, ec = adapter.range(node, e.text, capture)
+        visited = visited + 1
+        -- Captures starting on the slice's first line always run, so every slice advances.
+        if
+          sr + 1 > start
+          and (visited > limits.captures or now() - started > limits.batch_ms)
+        then
+          stop = math.min(stop or sr + 1, sr + 1)
+          break
         end
-        local priority = tonumber(capture.priority or metadata.priority) or 100
-        if priority ~= priority or math.abs(priority) == math.huge then
-          priority = 100
-        end
-        for line = math.max(start, sr + 1), math.min(last, er + 1) do
-          local length = #snapshot.lines[line]
-          local left = line == sr + 1 and math.max(0, sc) or 0
-          local right = math.min(length, line == er + 1 and ec or length)
-          if length <= limits.line_bytes and right > left then
-            if counters.spans >= limits.spans then
-              error(BUDGET)
+        high_water.captures = math.max(high_water.captures or 0, visited)
+        local name = tree.query.captures[id]
+        if name and name:sub(1, 1) ~= '_' and not capture.conceal and not metadata.conceal then
+          local group = intern('@' .. name .. '.' .. tree.lang)
+          if not group then
+            error(BUDGET)
+          end
+          local priority = tonumber(capture.priority or metadata.priority) or 100
+          if priority ~= priority or math.abs(priority) == math.huge then
+            priority = 100
+          end
+          priority = priority + tree.depth
+          for line = math.max(start, sr + 1), math.min(last, er + 1) do
+            local length = #snapshot.lines[line]
+            local left = line == sr + 1 and math.max(0, sc) or 0
+            local right = math.min(length, line == er + 1 and ec or length)
+            if length <= limits.line_bytes and right > left then
+              if counters.spans >= limits.spans then
+                error(BUDGET)
+              end
+              count('spans', 1)
+              local n = #spans
+              spans[n + 1], spans[n + 2], spans[n + 3], spans[n + 4], spans[n + 5] =
+                line, left, right, group, priority
+              raw[#raw + 1] = priority
+              chunk.priorities[priority] = true
             end
-            count('spans', 1)
-            local n = #spans
-            spans[n + 1], spans[n + 2], spans[n + 3], spans[n + 4], spans[n + 5] =
-              line, left, right, group, priority
-            raw[#raw + 1] = priority
-            chunk.priorities[priority] = true
           end
         end
       end
@@ -683,7 +862,9 @@ local function map_row(s, d, row, state)
   if not lang then
     return
   end
-  local key, col, n = snapshot.hash .. ':' .. lang, s.result_gutters[row + 1], #d.maps
+  -- Chunks with and without injected colors never share an entry.
+  local key = snapshot.hash .. ':' .. lang .. (s.config.syntax_injections and ':injections' or '')
+  local col, n = s.result_gutters[row + 1], #d.maps
   local extend = n > 0
     and d.maps[n - 1] == key
     and d.maps[n - 4] == col
@@ -864,8 +1045,15 @@ local function enrich_demand(s, d, started)
               end
             end
           end
+          local trees = { { root = e.tree:root(), query = e.query, lang = e.lang, depth = 0 } }
+          if s.config.syntax_injections then
+            trees = inject(e, first, last)
+            if progress.busy then
+              return
+            end
+          end
           trim_spans()
-          if extract(e, snapshot, first, last, d.win) then
+          if extract(e, snapshot, first, last, d.win, trees) then
             d.next_line = math.min(#d.maps[i + 3], last - d.maps[i + 1] + 1)
             if d.next_line >= #d.maps[i + 3] then
               d.next_map, d.next_line = i + MAP_WIDTH, 0
@@ -930,10 +1118,12 @@ end
 function M.reload()
   cache.revision = cache.revision + 1
   drop_demands()
+  cache.queries = {}
   for _, e in pairs(cache.entries) do
     clear_chunks(e)
     local ok, query = pcall(adapter.query, e.lang)
     e.query = ok and query or nil
+    e.injections, e.combined = nil, nil
     if not e.query and not e.active then
       evict(e.key)
     end
@@ -1061,6 +1251,7 @@ M._test = {
     for lang in pairs(cache.languages) do
       release_language(lang)
     end
+    cache.queries = {}
     release_groups()
     high_water = {}
     limits = vim.deepcopy(default_limits)
@@ -1075,6 +1266,9 @@ M._test = {
       or default_adapter
   end,
   collect = collect,
+  groups = function()
+    return vim.deepcopy(cache.group_ids)
+  end,
   demands = function()
     return vim.deepcopy(viewport.demands)
   end,
