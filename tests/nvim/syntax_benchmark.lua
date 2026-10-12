@@ -156,7 +156,11 @@ local ok, err = xpcall(function()
     stress .. '/dense.lua',
     string.rep(dense_line, math.floor((128 * 1024 - 32) / #dense_line))
   )
-  H.write(stress .. '/oversized.lua', string.rep('-- abc\n', 22000))
+  H.write(
+    stress .. '/large.lua',
+    string.rep(dense_line, math.floor((240 * 1024) / #dense_line))
+  )
+  H.write(stress .. '/oversized.lua', string.rep('-- abc\n', 40000))
   H.write(stress .. '/long.lua', 'local abc = "' .. string.rep('x', 5000) .. '"\n')
   H.write(stress .. '/embedded.md', '# abc\n\n```lua\nlocal abc = "abc"\n```\n')
   local s = search(stress)
@@ -171,8 +175,11 @@ local ok, err = xpcall(function()
   settled()
   p.close(s)
 
-  for _, name in ipairs({ 'oversized.lua', 'long.lua', 'embedded.md' }) do
+  for _, name in ipairs({ 'large.lua', 'oversized.lua', 'long.lua', 'embedded.md' }) do
     local panel = search(stress, { query = 'abc', include = { name } })
+    if enabled and name == 'large.lua' then
+      assert(syntax.diagnostics().spans > 0, 'large source syntax was not exercised')
+    end
     if enabled and name == 'embedded.md' then
       assert(syntax.diagnostics().rows > 0, 'embedded parent syntax was not exercised')
     end

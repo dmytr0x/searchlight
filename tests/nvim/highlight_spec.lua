@@ -294,7 +294,8 @@ H.test(
     p.setup({ syntax_highlighting = config })
     H.cleanup()
     a = H.fixture()
-    H.write(a .. '/one.lua', '-- abc\n' .. string.rep('-- padding\n', 14000))
+    -- 600 KiB, over the 256 KiB default file cap.
+    H.write(a .. '/one.lua', '-- abc\n' .. string.rep('-- padding\n', 56000))
     H.write(a .. '/two.lua', '-- abc ' .. string.rep('x', 5000) .. '\n')
     H.write(a .. '/three.unsupported', 'abc\n')
     s = H.search(a)
@@ -309,9 +310,42 @@ H.test(
       end
     end
     H.eq(s.status, 'complete')
+    H.eq(syntax.diagnostics().failures, 0)
     bounds()
   end
 )
+
+H.test('a 240 KiB source colors its visible rows', 'Syntax,Budgets', function()
+  syntax._test.reset()
+  local a = H.fixture()
+  local line = 'local abc = 42 -- abc\n'
+  H.write(a .. '/large.lua', string.rep(line, math.floor(240 * 1024 / #line)))
+  local s = H.search(a, { query = 'abc', context = 0 })
+  view.render(s)
+  local rows = vim.api.nvim_buf_line_count(s.buf)
+  vim.api.nvim_win_set_cursor(0, { math.floor(rows / 2), 0 })
+  vim.cmd('normal! zt')
+  settled()
+  local first = vim.fn.line('w0') - 1
+  local covered = {}
+  for _, code in ipairs(H.code_rows(s)) do
+    if code.row >= first and code.row < vim.fn.line('w$') then
+      covered[code.line] = false
+    end
+  end
+  assert(next(covered), 'no visible code rows')
+  for _, span in ipairs(spans()) do
+    if covered[span[1]] == false then
+      covered[span[1]] = true
+    end
+  end
+  for line_number, colored in pairs(covered) do
+    assert(colored, 'visible source line ' .. line_number .. ' has no spans')
+  end
+  H.eq(syntax.diagnostics().failures, 0)
+  bounds()
+  syntax._test.reset()
+end)
 
 H.test(
   'global bounds apply to ten sessions and hidden deleted panels release demand ownership',
@@ -408,7 +442,7 @@ local function fake(options)
     end,
     parser = function(text)
       bounds()
-      assert(#text <= syntax.diagnostics().limits.source_bytes)
+      assert(#text <= syntax.diagnostics().limits.retained_bytes)
       return {
         parse = function(_, _, done)
           bounds()

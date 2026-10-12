@@ -4,9 +4,8 @@ local M = { namespace = vim.api.nvim_create_namespace('searchlight_syntax') }
 local sessions = require('searchlight.sessions')
 local scope = require('searchlight.scope')
 local limits = {
-  source_bytes = 128 * 1024,
   parsers = 2,
-  retained_bytes = 256 * 1024,
+  retained_bytes = 512 * 1024,
   spans = 8192,
   rows = 256,
   blocks = 1024,
@@ -415,7 +414,7 @@ local function parse_entry(e)
   counters.parses = counters.parses + 1
   local done = false
   -- Async parsing yields between slices, so wall-clock time also counts unrelated
-  -- scheduled work. The source cap bounds parse cost; Neovim's 'redrawtime' TIMEOUT
+  -- scheduled work. The file size cap bounds parse cost; Neovim's 'redrawtime' TIMEOUT
   -- remains the safety net.
   local function finish(err, trees)
     if done then
@@ -483,8 +482,9 @@ local function admit(snapshot, lang, key)
     e.used = tick()
     return e
   end
+  -- A source larger than all retained capacity would only evict other parsers.
   if
-    #snapshot.text > limits.source_bytes
+    #snapshot.text > limits.retained_bytes
     or suppressed(cache.failures, key)
     or suppressed(cache.missing, lang)
   then
@@ -855,7 +855,7 @@ local function map_row(s, d, row, state)
     return
   end
   local length = #snapshot.lines[line]
-  if length > limits.line_bytes or #snapshot.text > limits.source_bytes then
+  if length > limits.line_bytes or #snapshot.text > s.config.syntax_max_file_bytes then
     return
   end
   local lang = snapshot_language(snapshot, state)

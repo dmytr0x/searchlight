@@ -9,6 +9,7 @@ local M = {
   config = vim.tbl_extend('force', input.defaults, {
     syntax_highlighting = true,
     syntax_injections = false,
+    syntax_max_file_bytes = 256 * 1024,
     debounce_ms = 150,
     max_results = 10000,
     concurrency = 4,
