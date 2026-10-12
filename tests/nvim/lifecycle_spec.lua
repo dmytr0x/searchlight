@@ -111,7 +111,10 @@ H.test('listed panel names include the search term and stay unique', 'S-01,S-02'
     assert(not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_buf_get_name(buf) ~= previous)
   end
   p.set(sa, { query = string.rep('q', 41) })
-  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id .. '/' .. string.rep('q', 40) .. '…')
+  H.eq(
+    vim.api.nvim_buf_get_name(sa.buf),
+    'searchlight://' .. sa.id .. '/' .. string.rep('q', 40) .. '…'
+  )
   p.set(sa, { query = '' })
   H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id)
   p.set(sa, { query = 'abc' })
@@ -273,9 +276,7 @@ H.test(
     local _, next_source = p.open(s)
     H.eq(vim.api.nvim_win_get_tabpage(next_source), tab)
     H.eq(vim.api.nvim_tabpage_list_wins(other_tab), other_windows)
-    assert(
-      vim.api.nvim_win_get_position(panel)[1] < vim.api.nvim_win_get_position(next_source)[1]
-    )
+    assert(vim.api.nvim_win_get_position(panel)[1] < vim.api.nvim_win_get_position(next_source)[1])
   end
 )
 H.test(

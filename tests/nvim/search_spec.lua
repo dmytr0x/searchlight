@@ -330,7 +330,7 @@ H.test('a slow ripgrep probe blocks neither setup nor an early search', 'R-02', 
     bin .. '/rg',
     "#!/bin/sh\ncase \"$*\" in *'--replace=$1!'*) sleep 1;; esac\nexec '"
       .. vim.fn.exepath('rg')
-      .. "' \"$@\"\n"
+      .. '\' "$@"\n'
   )
   vim.uv.fs_chmod(bin .. '/rg', 493)
   H.write(

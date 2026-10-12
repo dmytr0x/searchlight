@@ -257,7 +257,12 @@ end
 -- except for files listed by decode_sensitive.
 function M.prefilter(s, paths)
   local base = query_flags(s, {
-    'rg', '--no-config', '--files-with-matches', '--null', '--color=never', '--encoding=utf-8',
+    'rg',
+    '--no-config',
+    '--files-with-matches',
+    '--null',
+    '--color=never',
+    '--encoding=utf-8',
   })
   return batches(vim.list_extend(base, { '--regexp=' .. s.fields.query, '--' }), paths)
 end
@@ -265,8 +270,17 @@ end
 -- Files whose decoded snapshot can differ from what ripgrep matches on disk:
 -- CR bytes (CRLF or mixed endings) and invalid UTF-8 (decoded as Latin-1).
 function M.decode_sensitive(paths)
-  return batches({ 'rg', '--no-config', '--files-with-matches', '--null', '--color=never',
-    '--encoding=utf-8', '--regexp=\\r', '--regexp=\\x{FFFD}', '--' }, paths)
+  return batches({
+    'rg',
+    '--no-config',
+    '--files-with-matches',
+    '--null',
+    '--color=never',
+    '--encoding=utf-8',
+    '--regexp=\\r',
+    '--regexp=\\x{FFFD}',
+    '--',
+  }, paths)
 end
 
 -- Streaming splitter for `sep`-terminated records, bounded even if the child never

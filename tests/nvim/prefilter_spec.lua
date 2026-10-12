@@ -76,17 +76,21 @@ H.test('prefilter keeps modified buffers whose disk copy has no match', 'Prefilt
   H.eq(hits(s), { { a .. '/one', 1, 0, 3, 'abc' } })
 end)
 
-H.test('mixed line endings only make a search incomplete when they match on disk', 'Prefilter', function()
-  local a = H.fixture()
-  H.write(a .. '/mixed', 'xyz\r\nxyz\rxyz\n')
-  H.write(a .. '/one', 'abc\n')
-  local s = H.search(a)
-  H.eq(s.status, 'complete')
-  H.eq(s.incomplete, false)
-  H.eq(#s.results, 1)
-  H.update(s, { query = 'xyz' }, 'truncated')
-  H.eq(s.incomplete, true)
-end)
+H.test(
+  'mixed line endings only make a search incomplete when they match on disk',
+  'Prefilter',
+  function()
+    local a = H.fixture()
+    H.write(a .. '/mixed', 'xyz\r\nxyz\rxyz\n')
+    H.write(a .. '/one', 'abc\n')
+    local s = H.search(a)
+    H.eq(s.status, 'complete')
+    H.eq(s.incomplete, false)
+    H.eq(#s.results, 1)
+    H.update(s, { query = 'xyz' }, 'truncated')
+    H.eq(s.incomplete, true)
+  end
+)
 
 H.test('prefilter spawn failure falls back to every source', 'Prefilter', function()
   local a = H.fixture()

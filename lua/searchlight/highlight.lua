@@ -348,11 +348,7 @@ local function trim_spans()
     return a.used < b.used
   end)
   for _, other in ipairs(others) do
-    if
-      keep
-      and counters.chunks <= limits.chunks / 2
-      and counters.spans <= limits.spans / 2
-    then
+    if keep and counters.chunks <= limits.chunks / 2 and counters.spans <= limits.spans / 2 then
       break
     end
     remove_chunk(other.e, other.first)
@@ -751,10 +747,7 @@ local function extract(e, snapshot, first, last, win, trees)
         local sr, sc, er, ec = adapter.range(node, e.text, capture)
         visited = visited + 1
         -- Captures starting on the slice's first line always run, so every slice advances.
-        if
-          sr + 1 > start
-          and (visited > limits.captures or now() - started > limits.batch_ms)
-        then
+        if sr + 1 > start and (visited > limits.captures or now() - started > limits.batch_ms) then
           stop = math.min(stop or sr + 1, sr + 1)
           break
         end

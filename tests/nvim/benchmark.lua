@@ -46,7 +46,10 @@ local ok, err = xpcall(function()
   -- Prefilter gate: a scope with no hits must not spawn a process per file.
   local b = H.fixture()
   for i = 1, 2000 do
-    H.write(b .. string.format('/d%02d/file%04d.txt', i % 40, i), string.rep('abc abc abc abc\n', 25))
+    H.write(
+      b .. string.format('/d%02d/file%04d.txt', i % 40, i),
+      string.rep('abc abc abc abc\n', 25)
+    )
   end
   local process = require('searchlight.process')
   local start, processes = process.start, 0

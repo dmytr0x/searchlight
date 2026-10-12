@@ -425,29 +425,25 @@ H.test('incremental modifier edits remain ordinary text through redraws', 'Q-01,
   })
 end)
 
-H.test(
-  'explicit searches read the latest modifier text',
-  'Q-01,Q-09',
-  function()
-    local a = H.fixture()
-    H.write(a .. '/one', 'abc ABC\n')
-    local s = H.search(a)
-    local heading = '[Search]    Aa[yes]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]'
-    -- Change the options before explicitly submitting the search.
-    p.set(s, { query = 'ABC' })
-    vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
-    p.refresh(s)
-    H.wait(s, 'complete')
-    H.eq(s.options.case, true)
-    H.eq(#s.results, 1)
-    H.eq(s.results[1].match, 'ABC')
-    heading = heading:gsub('Aa%[yes%]', 'Aa[ ]')
-    vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
-    require('searchlight.search').source_changed(a .. '/one')
-    p.refresh(s)
-    H.wait(s, 'complete')
-    H.eq(s.options.case, false)
-    H.eq(#s.results, 2)
-    H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, 1, false), { heading })
-  end
-)
+H.test('explicit searches read the latest modifier text', 'Q-01,Q-09', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc ABC\n')
+  local s = H.search(a)
+  local heading = '[Search]    Aa[yes]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]'
+  -- Change the options before explicitly submitting the search.
+  p.set(s, { query = 'ABC' })
+  vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
+  p.refresh(s)
+  H.wait(s, 'complete')
+  H.eq(s.options.case, true)
+  H.eq(#s.results, 1)
+  H.eq(s.results[1].match, 'ABC')
+  heading = heading:gsub('Aa%[yes%]', 'Aa[ ]')
+  vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
+  require('searchlight.search').source_changed(a .. '/one')
+  p.refresh(s)
+  H.wait(s, 'complete')
+  H.eq(s.options.case, false)
+  H.eq(#s.results, 2)
+  H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, 1, false), { heading })
+end)

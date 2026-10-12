@@ -7,20 +7,24 @@ local function keys(text)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(text, true, false, true), 'xt', false)
 end
 
-H.test('render consumes input without reading or changing search generation', 'Q-01,Async', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc\n')
-  local s = H.search(a)
-  local read, generation = view.read, s.generation
-  view.read = function()
-    error('render must not read input')
+H.test(
+  'render consumes input without reading or changing search generation',
+  'Q-01,Async',
+  function()
+    local a = H.fixture()
+    H.write(a .. '/one', 'abc\n')
+    local s = H.search(a)
+    local read, generation = view.read, s.generation
+    view.read = function()
+      error('render must not read input')
+    end
+    local ok, err = pcall(view.render, s)
+    view.read = read
+    assert(ok, err)
+    H.eq(s.generation, generation)
+    H.eq(s.status, 'complete')
   end
-  local ok, err = pcall(view.render, s)
-  view.read = read
-  assert(ok, err)
-  H.eq(s.generation, generation)
-  H.eq(s.status, 'complete')
-end)
+)
 
 H.test('queued redraw preserves input edits and cancels pending debounce', 'Q-01,Async', function()
   local a = H.fixture()
@@ -38,7 +42,10 @@ H.test('queued redraw preserves input edits and cancels pending debounce', 'Q-01
     vim.api.nvim_buf_set_lines(s.buf, region.start, region.stop, false, { 'xyz' })
     vim.wait(100)
     H.eq(s.fields.query, 'xyz')
-    H.eq(vim.api.nvim_buf_get_lines(s.buf, s.regions.query.start, s.regions.query.stop, false), { 'xyz' })
+    H.eq(
+      vim.api.nvim_buf_get_lines(s.buf, s.regions.query.start, s.regions.query.stop, false),
+      { 'xyz' }
+    )
     H.eq(calls, 0)
     H.eq(s.status, 'stale')
     H.eq(s.timer, nil)

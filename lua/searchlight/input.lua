@@ -163,7 +163,9 @@ function M.valid_setting(key, value, default)
   if type(default) == 'boolean' then
     return type(value) == 'boolean'
   end
-  return type(default) == 'number' and type(value) == 'number'
-    and value == math.floor(value) and value >= (key == 'debounce_ms' and 0 or 1)
+  return type(default) == 'number'
+    and type(value) == 'number'
+    and value == math.floor(value)
+    and value >= (key == 'debounce_ms' and 0 or 1)
 end
 return M

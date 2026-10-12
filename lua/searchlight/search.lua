@@ -47,7 +47,11 @@ function M.invalidate(s, reason, launch)
   for _, r in ipairs(s.results) do
     r.stale = true
   end
-  transition(s, s.fields.query == '' and 'empty' or (launch == false and 'stale' or 'waiting'), reason)
+  transition(
+    s,
+    s.fields.query == '' and 'empty' or (launch == false and 'stale' or 'waiting'),
+    reason
+  )
   if s.fields.query == '' then
     s.results, s.selected, s.snapshots, s.identities = {}, nil, {}, {}
   end
@@ -183,8 +187,12 @@ end
 -- Session observations stay compatible; the run owns request/phase state and is
 -- captured only by its jobs. Domain callbacks never read mutable input mid-run.
 local function prepare_run(s, gen)
-  local request = { root = s.root, fields = vim.deepcopy(s.fields),
-    options = vim.deepcopy(s.options), config = vim.deepcopy(s.config) }
+  local request = {
+    root = s.root,
+    fields = vim.deepcopy(s.fields),
+    options = vim.deepcopy(s.options),
+    config = vim.deepcopy(s.config),
+  }
   if request.fields.query:find('[\r\n]') or request.fields.replacement:find('[\r\n]') then
     fail(s, gen, 'Search and Replace each accept one logical line')
     return
@@ -215,8 +223,15 @@ local function prepare_run(s, gen)
     fail(s, gen, tostring(buffers))
     return
   end
-  local inventory = { eligible = {}, identities = {}, preferred = {}, count = 0,
-    pending = {}, head = 1, tail = 0 }
+  local inventory = {
+    eligible = {},
+    identities = {},
+    preferred = {},
+    count = 0,
+    pending = {},
+    head = 1,
+    tail = 0,
+  }
   inventory.split = rg.split('\0', function(rel)
     inventory.tail = inventory.tail + 1
     inventory.pending[inventory.tail] = rel
@@ -224,10 +239,22 @@ local function prepare_run(s, gen)
   for _, buffer in ipairs(buffers) do
     inventory.preferred[scope.identity(buffer.path)] = buffer.path
   end
-  return { session = s, generation = gen, request = request, argv = argv, match_argv = rg.match(request),
-    buffers = buffers, inventory = inventory, group = job_group(s, gen),
-    queue = {}, next_source = 1, active = 0, previous_exclusions = s.exclusions,
-    exclusions = {}, snapshot_bytes = 0 }
+  return {
+    session = s,
+    generation = gen,
+    request = request,
+    argv = argv,
+    match_argv = rg.match(request),
+    buffers = buffers,
+    inventory = inventory,
+    group = job_group(s, gen),
+    queue = {},
+    next_source = 1,
+    active = 0,
+    previous_exclusions = s.exclusions,
+    exclusions = {},
+    snapshot_bytes = 0,
+  }
 end
 
 local function admit_path(run, rel)
@@ -317,7 +344,10 @@ local function select_sources(run)
     end
   end
   for path in pairs(run.inventory.eligible) do
-    if (not run.request.options.open or by_path[path]) and (not run.candidates or run.candidates[path]) then
+    if
+      (not run.request.options.open or by_path[path])
+      and (not run.candidates or run.candidates[path])
+    then
       table.insert(queue, { path = path, buf = by_path[path] })
     end
   end
@@ -369,7 +399,11 @@ local function accept_record(run, match, item)
   for _, submatch in ipairs(item.data.submatches) do
     if #s.results >= run.request.config.max_results then
       s.incomplete = true
-      transition(s, 'truncated', 'Match cap reached; increase max_results and refresh for Replace all')
+      transition(
+        s,
+        'truncated',
+        'Match cap reached; increase max_results and refresh for Replace all'
+      )
       M.cancel(s)
       results.order(s)
       render(s)
@@ -477,8 +511,7 @@ local function capture_snapshot(run, candidate)
       -- Retry after active sources have a chance to release no-hit snapshots.
       return nil, nil, true
     end
-    snap, err =
-      nil, 'session snapshot byte budget reached; increase max_snapshot_bytes and refresh'
+    snap, err = nil, 'session snapshot byte budget reached; increase max_snapshot_bytes and refresh'
   end
   return snap, err
 end
@@ -491,7 +524,9 @@ pump_sources = function(run)
   local examined = 0
   while run.active < run.request.config.concurrency and run.next_source <= #run.queue do
     if examined >= 50 then
-      vim.schedule(function() pump_sources(run) end)
+      vim.schedule(function()
+        pump_sources(run)
+      end)
       return
     end
     examined = examined + 1
@@ -504,7 +539,8 @@ pump_sources = function(run)
     end
     -- A mixed-ending file without a disk hit cannot hide a match.
     local unmatched = err == 'mixed or unsupported source line endings'
-      and run.hits and not run.hits[candidate.path]
+      and run.hits
+      and not run.hits[candidate.path]
     if not snap then
       if err ~= 'binary source (NUL bytes)' and not unmatched then
         s.incomplete = true
@@ -530,14 +566,19 @@ local function match_sources(run)
   select_sources(run)
   if #run.queue == 0 then
     -- Compile even with no eligible sources; empty scopes must report invalid regex.
-    start_job(run.group, run.match_argv, { cwd = run.request.root, stdin = '' }, function() end,
+    start_job(
+      run.group,
+      run.match_argv,
+      { cwd = run.request.root, stdin = '' },
+      function() end,
       function(out, stderr)
         if out.code ~= 0 and out.code ~= 1 then
           fail(s, gen, stderr ~= '' and stderr or 'Query validation failed')
         else
           finalize_run(run)
         end
-      end)
+      end
+    )
   else
     pump_sources(run)
   end
@@ -636,7 +677,9 @@ local function check_new_names(run)
     fail(s, gen, tostring(shadow))
     return
   end
-  start_job(run.group, run.argv, { cwd = shadow.cwd }, function(data) decode_inventory(run, data) end, function(shadow_out, shadow_stderr)
+  start_job(run.group, run.argv, { cwd = shadow.cwd }, function(data)
+    decode_inventory(run, data)
+  end, function(shadow_out, shadow_stderr)
     if shadow_out.code ~= 0 and shadow_out.code ~= 1 then
       fail(s, gen, shadow_stderr)
       return
@@ -674,7 +717,9 @@ function M.launch(s, gen)
   if not current(s, gen) or s.fields.query == '' then
     return
   end
-  if not rg.probe(function() M.launch(s, gen) end) then
+  if not rg.probe(function()
+    M.launch(s, gen)
+  end) then
     return
   end
   controller.synchronize(s, 'launch')

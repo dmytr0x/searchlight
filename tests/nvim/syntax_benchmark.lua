@@ -160,10 +160,7 @@ local ok, err = xpcall(function()
     stress .. '/dense.lua',
     string.rep(dense_line, math.floor((128 * 1024 - 32) / #dense_line))
   )
-  H.write(
-    stress .. '/large.lua',
-    string.rep(dense_line, math.floor((240 * 1024) / #dense_line))
-  )
+  H.write(stress .. '/large.lua', string.rep(dense_line, math.floor((240 * 1024) / #dense_line)))
   H.write(stress .. '/oversized.lua', string.rep('-- abc\n', 40000))
   H.write(stress .. '/long.lua', 'local abc = "' .. string.rep('x', 5000) .. '"\n')
   H.write(stress .. '/embedded.md', '# abc\n\n```lua\nlocal abc = "abc"\n```\n')

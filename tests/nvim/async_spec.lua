@@ -53,10 +53,13 @@ H.test('running searches keep their captured result budget', 'Async,Q-08', funct
     flush()
     calls[2].opts.stdout(nil, vim.json.encode({
       type = 'match',
-      data = { line_number = 1, submatches = {
-        { start = 0, ['end'] = 3, match = { text = 'abc' } },
-        { start = 4, ['end'] = 7, match = { text = 'abc' } },
-      } },
+      data = {
+        line_number = 1,
+        submatches = {
+          { start = 0, ['end'] = 3, match = { text = 'abc' } },
+          { start = 4, ['end'] = 7, match = { text = 'abc' } },
+        },
+      },
     }) .. '\n')
     calls[2].done({ code = 0 })
     H.wait(s, 'complete')

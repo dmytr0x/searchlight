@@ -71,33 +71,40 @@ H.test('panel movement and refresh respect scrolloff and sidescrolloff', 'R-01,R
   end)
 end)
 
-H.test('panels follow changed global scroll margins and retain local overrides', 'S-03,R-01', function()
-  with_scroll_options(function()
-    vim.opt.scrolloff = 2
-    vim.opt.sidescrolloff = 4
-    local s = panel()
-    assert_margins(2, 4)
-    -- Unset local values continue to use global settings after the panel is created.
-    vim.opt_local.scrolloff = -1
-    vim.opt_local.sidescrolloff = -1
-    vim.opt_global.scrolloff = 4
-    vim.opt_global.sidescrolloff = 12
-    p.navigate(s, 20)
-    assert_margins(4, 12)
-    vim.opt_local.scrolloff = 999
-    vim.opt_local.sidescrolloff = 999
-    p.focus(s.id)
-    p.navigate(s, 1)
-    view.render(s)
-    vim.cmd('redraw!')
-    H.eq(vim.wo.scrolloff, 999)
-    H.eq(vim.wo.sidescrolloff, 999)
-    local middle = math.floor(vim.api.nvim_win_get_height(0) / 2) + 1
-    assert(math.abs(vim.fn.winline() - middle) <= 1, 'large scrolloff did not center the cursor')
-    local center = math.floor(vim.api.nvim_win_get_width(0) / 2) + 1
-    assert(math.abs(vim.fn.wincol() - center) <= 1, 'large sidescrolloff did not center the cursor')
-  end)
-end)
+H.test(
+  'panels follow changed global scroll margins and retain local overrides',
+  'S-03,R-01',
+  function()
+    with_scroll_options(function()
+      vim.opt.scrolloff = 2
+      vim.opt.sidescrolloff = 4
+      local s = panel()
+      assert_margins(2, 4)
+      -- Unset local values continue to use global settings after the panel is created.
+      vim.opt_local.scrolloff = -1
+      vim.opt_local.sidescrolloff = -1
+      vim.opt_global.scrolloff = 4
+      vim.opt_global.sidescrolloff = 12
+      p.navigate(s, 20)
+      assert_margins(4, 12)
+      vim.opt_local.scrolloff = 999
+      vim.opt_local.sidescrolloff = 999
+      p.focus(s.id)
+      p.navigate(s, 1)
+      view.render(s)
+      vim.cmd('redraw!')
+      H.eq(vim.wo.scrolloff, 999)
+      H.eq(vim.wo.sidescrolloff, 999)
+      local middle = math.floor(vim.api.nvim_win_get_height(0) / 2) + 1
+      assert(math.abs(vim.fn.winline() - middle) <= 1, 'large scrolloff did not center the cursor')
+      local center = math.floor(vim.api.nvim_win_get_width(0) / 2) + 1
+      assert(
+        math.abs(vim.fn.wincol() - center) <= 1,
+        'large sidescrolloff did not center the cursor'
+      )
+    end)
+  end
+)
 
 H.test('result scrolling matches a normal buffer at buffer and line boundaries', 'R-01', function()
   with_scroll_options(function()

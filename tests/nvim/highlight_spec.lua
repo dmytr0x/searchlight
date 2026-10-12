@@ -146,12 +146,8 @@ H.test(
     H.eq(syntax.diagnostics().extractions, d.extractions)
     vim.cmd('redraw')
     H.eq(vim.api.nvim_buf_get_extmarks(s.buf, syntax.namespace, 0, -1, {}), {})
-    for _, mark in
-      ipairs(view.decorations(s))
-    do
-      if
-        mark[4].hl_group == 'SearchlightMatch' or mark[4].hl_group == 'SearchlightSelected'
-      then
+    for _, mark in ipairs(view.decorations(s)) do
+      if mark[4].hl_group == 'SearchlightMatch' or mark[4].hl_group == 'SearchlightSelected' then
         H.eq(mark[4].priority, 2000)
       end
     end
@@ -241,9 +237,12 @@ H.test(
     H.eq(vim.api.nvim_buf_get_lines(s.buf, position.row - 1, position.row, false), {
       'temporary result edit',
     })
-    assert(vim.wait(1000, function()
-      return not s.render_pending and not s.layout_invalid
-    end, 5), 'syntax layout was not repaired after the edit')
+    assert(
+      vim.wait(1000, function()
+        return not s.render_pending and not s.layout_invalid
+      end, 5),
+      'syntax layout was not repaired after the edit'
+    )
     assert(s.layout_revision > revision)
     view.render(s)
     assert(s.layout_revision > revision)
@@ -696,9 +695,12 @@ H.test(
     H.eq(deferred[2][1], 2000)
     clock = clock + 2000
     deferred[2][2]()
-    assert(vim.wait(1000, function()
-      return #spans() > 0
-    end, 5), 'colors did not return after the backoff expired')
+    assert(
+      vim.wait(1000, function()
+        return #spans() > 0
+      end, 5),
+      'colors did not return after the backoff expired'
+    )
     H.eq(syntax.diagnostics().failures, 0)
     H.eq(attempts, 3)
     syntax._test.reset()
@@ -751,9 +753,7 @@ H.test(
     H.eq(vim.list_slice(found[1], 1, 3), { 1, 1, 6 })
     assert(found[1][5] < 2000)
     local overlays = 0
-    for _, mark in
-      ipairs(view.decorations(s))
-    do
+    for _, mark in ipairs(view.decorations(s)) do
       if mark[4].virt_text then
         overlays = overlays + 1
         H.eq(mark[4].priority, 2000)

@@ -198,12 +198,7 @@ local function apply_sources(s, operation, plans, report)
     -- Preparation may load other sources and run autocmds. Validate again at edit time.
     local buf, reason = sources.validate(plan.edits[1].snapshot, true)
     if not buf or s.generation ~= operation.generation then
-      stale_source(
-        report,
-        plan.path,
-        plan.edits,
-        reason or 'session changed during replacement'
-      )
+      stale_source(report, plan.path, plan.edits, reason or 'session changed during replacement')
     else
       local applied, edit_error = apply_source(plan, buf)
       report.applied = report.applied + applied

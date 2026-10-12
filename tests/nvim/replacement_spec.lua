@@ -179,37 +179,41 @@ H.test(
     H.eq(H.read(b .. '/two'), 'abc\n')
   end
 )
-H.test('buffer setup errors release replacement ownership and remain retryable', 'R-04,R-07', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc')
-  local s = H.search(a)
-  local sources = require('searchlight.sources')
-  local original, previous_mutating = vim.api.nvim_set_option_value, sources.mutating
-  sources.mutating = true
-  vim.api.nvim_set_option_value = function(name, value, opts)
-    if name == 'fixendofline' and value == false then
-      error('injected buffer setup failure')
+H.test(
+  'buffer setup errors release replacement ownership and remain retryable',
+  'R-04,R-07',
+  function()
+    local a = H.fixture()
+    H.write(a .. '/one', 'abc')
+    local s = H.search(a)
+    local sources = require('searchlight.sources')
+    local original, previous_mutating = vim.api.nvim_set_option_value, sources.mutating
+    sources.mutating = true
+    vim.api.nvim_set_option_value = function(name, value, opts)
+      if name == 'fixendofline' and value == false then
+        error('injected buffer setup failure')
+      end
+      return original(name, value, opts)
     end
-    return original(name, value, opts)
-  end
-  local ok, err = xpcall(function()
-    local report = p.action(s, 'replace_all')
-    H.eq(report.applied, 0)
-    H.eq(report.failed, 1)
-    assert(report.details[1].reason:find('injected buffer setup failure', 1, true))
-    H.eq(next(replace.busy), nil)
-    H.eq(sources.mutating, true)
-    H.eq(H.lines(a .. '/one'), { 'abc' })
+    local ok, err = xpcall(function()
+      local report = p.action(s, 'replace_all')
+      H.eq(report.applied, 0)
+      H.eq(report.failed, 1)
+      assert(report.details[1].reason:find('injected buffer setup failure', 1, true))
+      H.eq(next(replace.busy), nil)
+      H.eq(sources.mutating, true)
+      H.eq(H.lines(a .. '/one'), { 'abc' })
+      H.eq(H.read(a .. '/one'), 'abc')
+    end, debug.traceback)
+    vim.api.nvim_set_option_value, sources.mutating = original, previous_mutating
+    if not ok then
+      error(err)
+    end
+    H.eq(p.action(s, 'replace_all').applied, 1)
+    H.eq(H.lines(a .. '/one'), { 'X' })
     H.eq(H.read(a .. '/one'), 'abc')
-  end, debug.traceback)
-  vim.api.nvim_set_option_value, sources.mutating = original, previous_mutating
-  if not ok then
-    error(err)
   end
-  H.eq(p.action(s, 'replace_all').applied, 1)
-  H.eq(H.lines(a .. '/one'), { 'X' })
-  H.eq(H.read(a .. '/one'), 'abc')
-end)
+)
 for _, fixture in ipairs({
   { name = 'overlapping', start = 2, finish = 5, match = 'c a' },
   { name = 'ambiguous', start = 0, finish = 0, match = '' },

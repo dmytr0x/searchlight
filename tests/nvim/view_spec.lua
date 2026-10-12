@@ -22,9 +22,12 @@ H.test(
       local region = s.regions.query
       vim.api.nvim_buf_set_lines(s.buf, region.start, region.stop, false, { query })
       vim.api.nvim_exec_autocmds('TextChangedI', { buffer = s.buf })
-      assert(vim.wait(1000, function()
-        return not s.render_pending and not s.layout_invalid
-      end, 5), 'input redraw timed out')
+      assert(
+        vim.wait(1000, function()
+          return not s.render_pending and not s.layout_invalid
+        end, 5),
+        'input redraw timed out'
+      )
       H.eq(s.fields.query, query)
       H.eq(tail(), expected)
     end
@@ -59,7 +62,9 @@ H.test(
     })
     local heading = lines[1]
     local controls = {}
-    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true })) do
+    for _, mark in
+      ipairs(vim.api.nvim_buf_get_extmarks(s.buf, view.namespace, 0, -1, { details = true }))
+    do
       if mark[2] == 0 and mark[4].hl_group == 'SearchlightControl' then
         table.insert(controls, heading:sub(mark[3] + 1, mark[4].end_col))
       end

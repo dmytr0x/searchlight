@@ -215,9 +215,7 @@ H.test(
     for _, mark in ipairs(marks) do
       local details = mark[4]
       local line = vim.api.nvim_buf_get_lines(s.buf, mark[2], mark[2] + 1, false)[1]
-      if
-        details.hl_group == 'SearchlightMatch' or details.hl_group == 'SearchlightSelected'
-      then
+      if details.hl_group == 'SearchlightMatch' or details.hl_group == 'SearchlightSelected' then
         table.insert(highlighted, line:sub(mark[3] + 1, details.end_col))
       elseif details.hl_group == 'SearchlightPath' then
         table.insert(paths, line:sub(mark[3] + 1, details.end_col))

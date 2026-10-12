@@ -221,9 +221,7 @@ local function add_help(s, add)
   for _, control in ipairs(controls) do
     add(control.label .. '  ' .. key(control.key) .. '  ' .. control.meaning)
   end
-  add(
-    '↕  Edit brackets: context lines above and below each match (default 2; 0 hides context).'
-  )
+  add('↕  Edit brackets: context lines above and below each match (default 2; 0 hides context).')
   add('Use a nonnegative whole number; incomplete or invalid context keeps the last valid size.')
   add(
     s.options.ignored and 'Policy: include hidden + config/normal ignored; exclude .git'
@@ -264,7 +262,9 @@ local function add_help(s, add)
   )
   add('[Session]')
   add(key('d') .. ' Root | ' .. key('L') .. ' Limit | ' .. key('R') .. ' Refresh')
-  add(key('R') .. ' in normal mode reruns the current query, options and filters after files change.')
+  add(
+    key('R') .. ' in normal mode reruns the current query, options and filters after files change.'
+  )
   add(key('q') .. ' Hide | ' .. key('D') .. ' Close | ? Hide/show help')
 end
 
@@ -481,7 +481,11 @@ local function row_decorations(s, row, emit)
   emit(row, 0, { end_col = gutter, hl_group = 'LineNr', priority = 2000 })
   local marker = s.result_markers[row + 1]
   if marker then
-    emit(row, marker, { end_col = marker + #'○', hl_group = 'SearchlightMarker', priority = 2001 })
+    emit(
+      row,
+      marker,
+      { end_col = marker + #'○', hl_group = 'SearchlightMarker', priority = 2001 }
+    )
   end
   for _, occurrence in ipairs(s.result_occurrences[row + 1] or {}) do
     local group = occurrence.disabled and 'Comment'

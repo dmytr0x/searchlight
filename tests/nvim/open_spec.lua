@@ -71,20 +71,24 @@ H.test('opening an unchanged source preserves fresh circle markers', 'S-05,R-01'
   end
 end)
 
-H.test('adding an existing source only invalidates the open-file search scope', 'S-05,B-01', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc\n')
-  local disk = H.search(a)
-  local open = H.search(a, { query = 'abc', open = true })
-  H.eq(#open.results, 0)
-  p.open(disk)
-  vim.wait(30)
-  H.eq(disk.status, 'complete')
-  H.eq(open.status, 'stale')
-  p.refresh(open)
-  H.wait(open, 'complete')
-  H.eq(#open.results, 1)
-end)
+H.test(
+  'adding an existing source only invalidates the open-file search scope',
+  'S-05,B-01',
+  function()
+    local a = H.fixture()
+    H.write(a .. '/one', 'abc\n')
+    local disk = H.search(a)
+    local open = H.search(a, { query = 'abc', open = true })
+    H.eq(#open.results, 0)
+    p.open(disk)
+    vim.wait(30)
+    H.eq(disk.status, 'complete')
+    H.eq(open.status, 'stale')
+    p.refresh(open)
+    H.wait(open, 'complete')
+    H.eq(#open.results, 1)
+  end
+)
 
 H.test(
   'Enter opens results with native edit settings, centering and highlights',
@@ -129,7 +133,11 @@ H.test(
         H.eq(window_options('global'), defaults, 'panel changed the editor window defaults')
         p.navigate(s, -#s.results)
         p.navigate(s, 1)
-        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<CR>', true, false, true), 'xt', false)
+        vim.api.nvim_feedkeys(
+          vim.api.nvim_replace_termcodes('<CR>', true, false, true),
+          'xt',
+          false
+        )
         local win = vim.api.nvim_get_current_win()
         H.eq(vim.api.nvim_buf_get_name(0), path)
         H.eq(window_options(), expected, 'source settings differ from native :edit')

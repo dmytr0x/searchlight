@@ -82,9 +82,13 @@ function M.setup()
         if event.event == 'BufAdd' and vim.uv.fs_stat(path) then
           -- Listing an existing file changes open-file scope, not its contents.
           -- Keep disk searches fresh when a result is opened through :edit.
-          search.source_changed(path, false, generations(function(s)
-            return s.options.open
-          end))
+          search.source_changed(
+            path,
+            false,
+            generations(function(s)
+              return s.options.open
+            end)
+          )
         else
           search.source_changed(path)
         end
