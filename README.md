@@ -1,319 +1,332 @@
 # Searchlight
 
-A persistent, editable Neovim search panel with independent sessions, ripgrep controls,
-unsaved-buffer search, per-occurrence exclusions, capture previews, and undoable replacement.
-Edits stay in source buffers until you save them.
+**Keep your search open. Review every match. Replace on your terms.**
+
+Searchlight is a persistent search-and-replace panel for Neovim, powered by ripgrep.
+Search a project or your open buffers, narrow the results, and work through individual
+occurrences without losing your query. Replacements stay in source buffers for you
+to review, undo, and save.
+
+![Searchlight panel with editable fields, grouped Lua results, a selected match, and an excluded occurrence](docs/images/panel.svg)
+
+*Panel illustration generated from actual Neovim results. Open-file and ignored-file
+icons are shown as labels for readability; colors depend on your colorscheme.*
+
+[Install](#installation) · [Quick start](#quick-start) · [Features](#features) ·
+[Keymaps](#keymaps) · [Configuration](#configuration) · [Benchmarks](#benchmarks)
+
+## Features
+
+| Feature | What you get |
+| --- | --- |
+| Persistent sessions | Independent panels with their own root, query, filters, options, selection, exclusions, and limits. Hide and reopen them during the same Neovim session. |
+| Familiar editing | Edit fields with normal Vim motions, insert mode, and undo. Enter submits; Tab cycles fields. Typing never starts a search. |
+| Flexible matching | Literal or ripgrep regex search, case sensitivity, whole words, and configurable surrounding context. |
+| Project or buffer scope | Search disk files with modified and newly named unsaved buffers overlaid, or search only listed normal buffers. |
+| Precise filters | Include/exclude globs, comma-separated or multiline, with ripgrep ignore rules and an option to include ignored files. Hidden files are included by default. |
+| Readable results | Collapsible file groups, line numbers, merged context, occurrence counts, and every match highlighted—even several on one line. |
+| Exact navigation | Move between individual occurrences with `n`/`N` or `[`/`]`; open the exact match in a source split with folds opened and the line centered. |
+| Native source search | Opening a result sets Neovim's search register and `hlsearch`, so native `n`/`N` continue through that file. |
+| Selective replacement | Exclude individual occurrences, replace one match or all enabled matches, and expand numbered or named regex captures. |
+| Reviewable edits | Replacements remain unsaved, use a native undo block per source buffer, validate searched snapshots, and report skipped or failed edits. |
+| Syntax highlighting | Use installed Tree-sitter parsers and your colorscheme for result code. Optional embedded-language highlighting; readable plain-text fallback. |
+| Bounded asynchronous work | Cancellable searches, batched disk prefiltering, configurable resource limits, and a shared bounded syntax cache. Incomplete results block Replace all. |
+| Neovim integration | Listed panel buffers, commands, buffer-local actions, existing mapping preservation, and normal split resizing and scroll margins. No required Lua plugin dependencies. |
 
 ## Installation
 
-The repository root is the plugin runtime directory. Lua modules live in
-`lua/searchlight/`; install this repository with your plugin manager and configure it
-from your Neovim configuration:
+### Requirements
 
-```lua
-require('searchlight').setup()
-```
+| Dependency | Required? | Details |
+| --- | --- | --- |
+| [Neovim](https://neovim.io/doc/install/) 0.12+ | Yes | Locally tested with 0.12.6. `setup()` checks the required Neovim APIs. |
+| [ripgrep (`rg`)](https://github.com/BurntSushi/ripgrep#installation) on `$PATH` | Yes | Tested with 15.2.0. Replacement requires JSON capture-expansion support, which Searchlight probes automatically. Older builds can search but have replacement disabled if that capability is missing. |
+| Tree-sitter parsers and highlight queries | Optional | Used for result syntax colors when installed. Searchlight does not install parsers or start LSP clients. |
+| Nerd Font | Optional | Renders the two search-control icons. Their mappings and the `?` help remain usable without it. |
 
-For a local checkout with lazy.nvim, add this plugin specification (adjust `dir` to
-your checkout):
+Check your executables with `nvim --version` and `rg --version`. There is no plugin
+build step and no required Telescope, Plenary, or Tree-sitter plugin dependency.
+
+### lazy.nvim
+
+Add this specification to your [lazy.nvim](https://lazy.folke.io/spec) plugin list:
 
 ```lua
 {
-  dir = vim.fn.expand('~/path/to/nvim-search'),
+  'dmytr0x/searchlight',
+  lazy = false,
   main = 'searchlight',
   opts = {},
 }
 ```
 
-Alternatively, load a local checkout directly before calling `setup()`:
+This runs `require('searchlight').setup()` at startup and registers the commands and
+default global mappings. For command-only lazy loading, replace `lazy = false` with
+`cmd = { 'SearchlightNew', 'SearchlightFocus', 'SearchlightClose' }`; the default
+global mappings are registered after the plugin loads.
+
+### Other plugin managers or a local checkout
+
+Install `dmytr0x/searchlight` with your plugin manager, then call this after it loads:
 
 ```lua
-vim.opt.runtimepath:prepend(vim.fn.expand('~/path/to/nvim-search'))
 require('searchlight').setup()
 ```
 
-`setup()` registers the commands, mappings, and event handlers. Repeating it preserves
-existing sessions. Searchlight requires Neovim 0.12 or newer. Neovim capabilities and
-ripgrep JSON replacement support are probed; tested versions are Neovim 0.12.6 and
-ripgrep 15.2.0. Older ripgrep can search, but replacement stays disabled if capture
-expansion is unavailable.
+To try a checkout directly:
 
-The project layout is:
-
-```text
-lua/searchlight/  Plugin modules and public init.lua
-tests/nvim/       Isolated test configuration, assertions, and benchmarks
-tests/prototype/  Backend evaluation adapter
+```sh
+git clone https://github.com/dmytr0x/searchlight.git ~/searchlight
 ```
 
-## Commands and workflow
-
-| Command / mapping | Action |
-| --- | --- |
-| `:SearchlightNew [root]` / `<leader>sp` | Create a uniquely named, listed panel in a horizontal split at the top |
-| `:SearchlightFocus [id]` / `<leader>sP` | Restore the requested or most recently used surviving panel |
-| `:SearchlightClose` | Delete the current panel and dispose its session |
-
-The root defaults to the invoking window's current directory and stays captured even
-after `:cd`. Escaped spaces work in command arguments. Ordinary window closure hides
-the panel; `:buffer searchlight://ID` also restores it. Listed names include the
-current search term (`searchlight://ID/term`) so multiple panels stay distinguishable
-in `:ls` and buffer pickers. `:bdelete` and `:bwipeout` end its session. Existing
-global mappings with conflicting keys are preserved.
-
-If the tab has only an untouched, empty unnamed editor window, search uses that
-window directly. Opening a result then leaves just the search panel and source file.
-Existing files, unsaved buffers, and split layouts keep their windows.
-
-Type in the lines below Search, Replace, Include, and Exclude using normal Vim editing.
-Typing in the panel or a source file never launches a search. Press Enter in an input
-line (normal or insert mode) to search with the current fields, options, and filters.
-Enter in Replace refreshes capture/replacement previews; use Replace next or Replace
-all to apply them. Source edits mark affected results stale until you explicitly refresh.
-Tab cycles fields in normal and insert mode. Filter lines accept comma-separated ripgrep
-globs, such as `*.md, *.py, *project*/**/*.lua`, and can span multiple lines.
-Use normal-mode `o`/`O` to add filter lines; Enter submits the input.
-Include and Exclude preserve your text exactly, including leading/trailing spaces,
-tabs, blank lines, and unfinished patterns, through refreshes and hiding/showing filters.
-Whitespace trimming and empty-declaration handling apply only when interpreting globs
-for a search; they never rewrite the editable lines.
-The results header shows the current occurrence and total count, such as
-`[Results]  1/27` (`0/0` for no matches). `?` opens visible help. Resize the split
-normally; long rows can be inspected with normal horizontal scrolling.
-The panel respects `vim.opt.scrolloff` and `vim.opt.sidescrolloff`, including
-window-local overrides; no separate plugin settings are needed.
-As in normal Neovim buffers, vertical margins shrink near the first and last
-buffer lines, and the left margin shrinks near the start of a line.
-
-Results are grouped by file, with the filename and its directory shown once in a
-highlighted header. Matches and context appear as numbered code lines beneath it:
-
-```text
-▾ actions.lua  lua/searchlight/
-      132 |   close(s)
-> ●   133 |   default = s.root
-      134 |   update(s)
-      ⋯
-  ○   141 |   default = tostring(limit)
-
-▾ init.lua  lua/searchlight/
-  ○   118 |   local default = config[key]
+```lua
+vim.opt.runtimepath:prepend(vim.fn.expand('~/searchlight'))
+require('searchlight').setup()
 ```
 
-Each source line appears once, including lines with several matches. All occurrences
-are highlighted; the selected occurrence uses a distinct highlight. `n` and `N` move
-forward and backward between individual occurrences, support counts such as `3n`,
-and wrap when `wrapscan` is enabled. `[` and `]` also move between occurrences and
-stop at either end. These keys place the cursor on the exact match. Move onto a
-highlight to open, exclude, or replace that occurrence. From the line-number gutter,
-actions use the selected occurrence on that line, or its first match.
-Match lines always use green `○`; the cursor line uses green `●`, including excluded
-and stale results. Excluded occurrences are dimmed. A `⋯` row separates distant
-context blocks inside the same file group.
+For a local lazy.nvim specification, replace `'dmytr0x/searchlight'` with
+`dir = vim.fn.expand('~/searchlight')`. The repository root is the plugin runtime
+directory.
 
-Press Enter on a file header to collapse or expand its code. Collapse state survives
-refresh and does not change exclusions or replacement scope. Navigating to an
-occurrence automatically expands its file.
+## Quick start
 
-Opening an occurrence creates a new horizontal split below the search panels each
-time, keeping earlier source views open. Search stays at the top; focusing a hidden
-panel restores it at the top. Each jump stays in the search panel's tab.
-After placing the cursor on the exact occurrence and opening any enclosing folds,
-each jump runs `zz` to center the matched line vertically in the source window.
-Source windows inherit the editor settings from before the panel was opened,
-including line numbers, wrapping, signs, and folds. Files open through `:edit`,
-so normal filetype settings and autocommands apply.
+1. Run `:SearchlightNew` in your project, or `:SearchlightNew /path/to/project`.
+2. Enter your query on the line below **Search** and press Enter in normal or insert
+   mode. The default search is case-insensitive and literal, with two context lines.
+3. Use `n`/`N` to visit occurrences. Press Enter on a match to open its source; use
+   `:SearchlightFocus` to return to the panel. Enter on a file header collapses it.
+4. Narrow the search with **Include** (for example, `*.lua, *.md`) and **Exclude**
+   (for example, `vendor/**`), then press Enter in a field to refresh.
+5. To replace, enter a value below **Replace** and press Enter to refresh replacement
+   values. Use Space on a match to exclude it, `<localleader>n` to replace the
+   selected enabled occurrence, or `<localleader>A` to replace all enabled matches.
+6. Review the changed source buffers. Use `u` or Ctrl-r there to undo or redo, then
+   `:write` or `:wall` when ready to save.
 
-Opening an occurrence also highlights that session's matches in the source
-file. Native `n` / `N` (Shift+n) move forward / backward within that file, including
-excluded occurrences, with counts and `wrapscan` support. This sets Vim's search
-register and enables `hlsearch`; `:nohlsearch` clears the highlighting, and a new
-`/` or `?` search takes over normally. Every jump rebuilds a compact
-pattern such as `\c\VAction` (or `\C\VAction` with Match Case), keeping the search
-display readable and following source edits naturally. Whole Words adds Vim word
-boundaries (`\<` / `\>`), and Regex uses Vim's very-magic mode (`\v`). Source
-navigation therefore uses Vim's regex syntax and the buffer's `iskeyword` word
-boundaries, which can differ from ripgrep's panel results. The pattern always uses
-the current search term and controls, even when results are stale or capped; `n`
-and `N` can reach matches beyond the panel's result cap.
+`<localleader>` defaults to `\`, so Replace all is `\A` unless you configured a
+different local leader. Set `vim.g.maplocalleader = ','` **before opening a panel**
+if you prefer `,A`. Press `?` in the panel for help.
 
-Searching with `/` in a source buffer or clearing native search highlighting leaves
-the panel's last searched term highlighted. Stale results retain their match colors
-and selected highlight and circle markers. Refresh stale results before replacement.
+**Searches are explicit.** Editing fields or source files marks results stale;
+press Enter in an input line or `<localleader>R` in normal mode to refresh.
+Option-toggle mappings and Lua `set()` updates schedule a debounced search.
+Enter in Replace refreshes values; replacement is a separate action.
 
-The input block groups controls with Search. Empty fields start with one editable
-line; add more lines with normal Vim editing:
+### A regex replacement example
+
+Enable Regex with `<localleader>x`, use Include `*.lua`, and enter these fields:
 
 ```text
-[Search]    Aa[ ]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]
-search terms
+[Search]
+config\.(\w+)
 [Replace]
-replacement terms
-[Include]
-*.md, *.py, *project*/**/*.lua
-[Exclude]
-generated/**, vendor/**
+settings.$1
 ```
 
-`Aa` toggles case sensitivity, `wd` whole words, `.*` regular expressions,
-`󰥩` only open files, and `` ignored files. `↕[2]` sets the number of context lines
-above and below each matched line. Edit its number with normal Vim editing; `0` shows
-only matches. Each search passes the value to ripgrep as `--context=N`, including searches
-of unsaved buffers. Overlapping context is shown once per file; context rows have line
-numbers and do not count as matches or replacement targets. Empty, incomplete, negative,
-or otherwise invalid context values preserve the last valid size and your typed text.
-Changing the effective size marks only that session stale; press Enter in an input line
-or on the controls to refresh. Native undo also restores the size. Context stays available
-when Replace or filters are hidden.
-Hidden files are searched by default.
-`[x]` means enabled;
-`[]` and `[ ]` both mean disabled. With `Aa[x]`, `search` matches lowercase `search`
-but excludes `Search` and `SEARCH`. Case applies to the matched text; a line such as
-`# Persistent search panel` still matches. Edit any modifier's brackets with normal
-Vim editing: a modifier is enabled only when its brackets contain at least one character
-other than an ASCII space. Empty brackets (`[]`) and spaces-only values (`[ ]`, `[   ]`)
-disable it. Missing or malformed brackets disable that modifier. The panel
-preserves exactly what you type, including incomplete brackets. Changing any option's
-enabled state by editing or undo marks only that session stale. Press Enter in an input
-line or on the controls to refresh. Toggle mappings explicitly change the option and
-schedule a refresh. Pending searches are cancelled and their late output is ignored.
-Empty queries stay idle.
-Every search reads the current brackets. All five
-modifiers stay available when Replace or filters are hidden. The two icons use a Nerd
-Font. You can also toggle with the local-leader mappings below; `?` shows the legend
-and shortcuts inside the panel.
-Hide Replace with `<localleader>v` for the Search / Include / Exclude layout.
-The compact results header follows the input block; active hidden values, search
-messages, and replacement reports are shown there when needed.
+After refreshing, the replacements are:
 
-For example, enable `.*`, enter `a(b)c` in Search and `$1!` in Replace, enter `*.lua, *.txt`
-in Include, and enter `generated/**` in Exclude. Review the individual
-matches with `[` and `]`, open one with Enter, return with Focus Search, use Space to
-exclude a result, then apply enabled matches with `<localleader>A`.
+```diff
+-config.timeout = 1000
+-config.retries = 3
++settings.timeout = 1000
++settings.retries = 3
+```
 
-## Panel mappings
+`$1` and `${name}` expand captures; `$$` inserts a literal dollar sign.
+An empty replacement deletes the matched bytes. Capture expansion is available in
+each occurrence's replacement value and through the [Lua preview API](#lua-api);
+the panel has no additional before/after preview row.
 
-`<localleader>` is your existing local leader (Neovim defaults to `\`; the test/demo
-configuration uses `,`). Actions are buffer-local. Vim's `d`, `w`, `x`, `c`, `r`, and
-other native editing keys remain available in fields.
+## Panel and session behavior
+
+Each source line appears once, even when it contains several matches. Matches are
+highlighted individually; the selected occurrence has a distinct highlight, and
+excluded occurrences are dimmed. Move onto a highlight to open, exclude, or replace
+that occurrence. From the gutter, actions use the selected occurrence on that line,
+or its first match.
+
+```text
+[Results]  3/7
+▾ client.lua  lua/
+  ○   1 | local config = require("config")
+      2 |
+      3 | local function connect()
+> ●   4 |   return config.timeout
+      5 | end
+
+▾ config.lua  lua/
+  ○   1 | local config = {}
+      2 |
+  ○   3 | config.timeout = 1000
+  ○   4 | config.retries = 3
+      5 |
+  ○   6 | return config
+```
+
+The header counts **occurrences**, not lines. `○` marks a match line; `●` marks the
+cursor's match line, including stale or excluded results. A `⋯` row separates distant
+context blocks. Context rows do not count as matches or replacement targets.
+File collapse state survives refreshes, and navigation expands the selected file.
+
+Panels open at the top of the tab. An untouched empty startup window is reused;
+existing editor windows and split layouts are preserved. Every source jump creates
+a new horizontal split below the panels, opens the exact occurrence, unfolds it,
+and centers it with `zz`. Source windows inherit the editor's pre-panel options and
+normal filetype/autocommand behavior.
+
+Sessions survive hiding or ordinary window closure within the running Neovim
+instance. Their listed buffer names include the query (`searchlight://ID/term`) for
+buffer pickers and `:ls`. `:SearchlightFocus` restores a panel at the top; selecting
+its buffer also restores it. `:bdelete`, `:bwipeout`, or `:SearchlightClose` dispose
+the session. Repeating `setup()` preserves surviving sessions.
+
+Resize and scroll normally. Long lines do not wrap; horizontal scrolling,
+`scrolloff`, and `sidescrolloff` work, including window-local overrides.
+Hiding Replace or filters preserves their active values; the panel shows a reminder
+when hidden fields affect the search.
+
+## Commands
+
+| Command | Default global mapping | Action |
+| --- | --- | --- |
+| `:SearchlightNew [root]` | `<leader>sp` | Create a new independent panel. |
+| `:SearchlightFocus [id]` | `<leader>sP` | Focus a requested session or the most recently used surviving one. |
+| `:SearchlightClose` | — | Delete the current panel and dispose its session. |
+
+The root defaults to the invoking window's current directory and remains captured
+after `:cd`. Escape spaces in command arguments. Existing conflicting global
+mappings are preserved. For your own shortcut:
+
+```lua
+vim.keymap.set('n', '<leader>sf', function()
+  require('searchlight').new()
+end, { desc = 'Searchlight: new search' })
+```
+
+## Keymaps
+
+Panel mappings are buffer-local. Unless noted, use normal mode; ordinary editing
+keys such as `d`, `w`, `x`, `c`, `r`, `o`, and `O` remain available in fields.
 
 | Key | Action |
 | --- | --- |
-| `<localleader>/`, `<localleader>r`, `<localleader>I`, `<localleader>E` | Focus Search, Replace, Include, Exclude respectively |
-| `<localleader>c` | Toggle Match case |
-| `<localleader>w` | Toggle Whole word |
-| `<localleader>x` | Toggle Regex / literal |
-| `<localleader>o` | Toggle Only open files |
-| `<localleader>g` | Toggle Also ignored |
-| `<localleader>f`, `<localleader>v` | Hide/show filters or replacement; values remain active |
-| `<localleader>d` | Edit the session root |
-| `<localleader>L` | Change the match limit and refresh |
-| `[`, `]` | Previous / next individual occurrence; stop at either end |
-| `n`, `N` | Next / previous individual occurrence; counts supported, wrapping follows `wrapscan` |
-| Enter | In an input line or on the controls, refresh search/previews; on results, open the occurrence; on a file header, collapse/expand |
-| Space | Enable/exclude the occurrence under the cursor, otherwise the selected one |
-| `<localleader>n`, `<localleader>A` | Replace next / Replace all |
-| `<localleader>R` | Rerun the current search term with the current options and filters |
-| `<localleader>q`, `<localleader>D` | Hide / delete the session |
-| `?`, Tab | Help / next field |
+| `<localleader>/`, `<localleader>r` | Focus Search / Replace. |
+| `<localleader>I`, `<localleader>E` | Focus Include / Exclude. |
+| Tab | Cycle fields (normal and insert mode). |
+| Enter | Refresh in a field or on the controls (normal and insert mode); open a result or collapse/expand a file header (normal mode). |
+| `n`, `N` | Next / previous occurrence; counts such as `3n` work, wrapping follows `wrapscan`. |
+| `[`, `]` | Previous / next occurrence; stop at either end. |
+| Space | Enable/exclude the occurrence under the cursor, otherwise the selected occurrence. |
+| `<localleader>n`, `<localleader>A` | Replace the selected enabled occurrence / all enabled occurrences. |
+| `<localleader>R` | Refresh using the current query, replacement, options, and filters. |
+| `<localleader>c` | Toggle Match case (`Aa`). |
+| `<localleader>w` | Toggle Whole words (`wd`). |
+| `<localleader>x` | Toggle Regex (`.*`). |
+| `<localleader>o` | Toggle Only open files (`󰥩`). |
+| `<localleader>g` | Toggle Also ignored (``). |
+| `<localleader>f`, `<localleader>v` | Hide/show filters / Replace; values remain active. |
+| `<localleader>d`, `<localleader>L` | Change the session root / match limit and schedule or run a refresh. |
+| `<localleader>q`, `<localleader>D` | Hide / delete the session. |
+| `?` | Show/hide help. |
 
-To refresh results after files change, focus the panel and press `<localleader>R`
-in normal mode (`\R` with Neovim's default local leader, or `,R` in the test/demo
-configuration). This immediately reruns that session's search, reading the current
-fields and modifier brackets without requiring you to edit the search term.
-Enter in an input line does the same.
+You can also edit the Search header's brackets directly. `[x]` enables a modifier;
+`[]` or spaces-only brackets disable it. Any non-space character enables it;
+malformed brackets disable it. Edit `↕[2]` to change context lines above and below
+matches; `0` hides context. Invalid or unfinished context values keep the last valid
+size. Direct edits and undo preserve your text and wait for explicit refresh.
 
 ## Matching and scope
 
-All five modifiers default to OFF: case insensitive, literal matching, whole word off,
-project scope, and ignored files off. Explicit input submission starts immediately;
-Programmatic `set()` updates and toggle mappings use a 150 ms default debounce.
-Empty queries remain idle; one-character queries work.
-Regex uses ripgrep's default syntax, with no implicit PCRE2 or Vim-pattern translation.
-Search and replacement each accept one logical line. `$1` and `${name}` expand captures;
-`$$` is a literal dollar. An empty replacement deletes the selected bytes.
+- **Defaults:** case-insensitive, literal, whole words off, project scope, ignored
+  files off, hidden files on. Empty queries remain idle; one-character queries work.
+- **Patterns:** panel regexes use ripgrep's default engine and syntax, without
+  implicit PCRE2 or Vim-pattern translation. Search and replacement accept one
+  logical line each.
+- **Filters:** use positive globs in both fields, without a leading `!`. Includes
+  form a union; exclusions win. Separate globs with commas or newlines. Brace
+  alternatives (`*.{lua,md}`), character classes (`file[,.]txt`), and escaped commas
+  (`notes\,draft.md`) are preserved. Whitespace and blank declarations are ignored
+  when interpreting filters; editable text is retained exactly.
+- **Project scope:** disk search includes modified and newly named unsaved buffers
+  without duplicate disk hits. A clean buffer that differs from disk is searched
+  from disk; replacement is blocked until the buffer agrees with that snapshot.
+- **Only open files:** search current contents of listed normal buffers within the
+  root, loading listed unloaded buffers as needed. Special buffers (panels,
+  terminals, help, and similar) are excluded.
+- **Hidden and ignored files:** hidden paths such as `.config/nvim/` are searched by
+  default, subject to filters and ignore rules. Also ignored bypasses normal ignores
+  and ripgrep config with `--no-config --no-ignore --hidden`. `.git` metadata is
+  always excluded.
+- **File identity:** real paths must stay within the root. Symlink and hard-link
+  identities are deduplicated; current buffers take precedence for shared sources.
+  Symlink traversal follows ripgrep's configured `--follow` policy.
+- **Unsaved file eligibility:** new filenames are evaluated with real ripgrep glob
+  and ignore behavior in a disposable tree, including ancestor ignore files and
+  Git excludes. Searchlight creates no placeholder files in your project.
 
-Includes form a union. Exclusions win over includes. Supply positive patterns in each
-field, without a leading `!`; the Exclude field adds negation itself. Separate declarations
-with commas or newlines; surrounding whitespace and empty declarations are ignored.
-Commas inside brace alternatives (`*.{md,py}`), character classes (`file[,.]txt`),
-or escaped with a backslash (`notes\,draft.md`) remain part of the glob.
-Disk discovery
-uses ripgrep's glob and ignore policy. Listed normal buffers are eligible sources;
-panel, terminal, help, and other special buffers are excluded. Only-open scope searches
-current memory, including listed unloaded buffers after loading them. Project scope
-overlays modified and newly named unsaved buffers on disk sources without duplicate hits.
-For a clean buffer that diverges from disk, project scope searches disk and blocks edits
-until its buffer agrees with that snapshot.
+With Also ignored off, `RIPGREP_CONFIG_PATH` is checked before discovery. Supported
+configuration includes long `--glob=`, `--iglob=`, type-filter flags, absolute
+`--ignore-file=`, hidden/ignore/follow controls, and max-column/preview/no-heading
+settings. Searchlight controls the matching flags itself. Unsupported flags, short
+forms, relative ignore-file paths, or incompatible engine/output settings produce
+a visible error. See the [accepted flags](lua/searchlight/rg.lua).
 
-Hidden files and directories are searched in both modes, including sources under
-`.config`. Discovery explicitly uses `--hidden`, overriding configured `--no-hidden`.
-With Also ignored **off**, the panel respects `RIPGREP_CONFIG_PATH` globs and normal
-ignore files. With it **on**,
-`--no-config --no-ignore --hidden` includes configuration-ignored, normally ignored,
-and hidden files such as `.venv`, followed by the UI filters. `.git` metadata is always
-excluded. Real paths must remain within the root; symlink and hard-link identities are
-deduplicated. Current buffers take precedence for a shared physical source.
+Opening a result sets Vim's search register and enables `hlsearch`. In the source,
+native `n`/`N` support counts, follow `wrapscan`, include excluded occurrences, and
+can reach beyond the panel's result cap. `:nohlsearch` clears native highlights;
+a new `/` or `?` search takes over without clearing the panel's highlights.
+Source navigation uses Vim regex syntax and the buffer's `iskeyword`, so regex and
+whole-word navigation can differ from ripgrep's panel matches.
 
-For example, searching `if` with Include `*.lua,*.sh` also searches Lua files below
-`.config/nvim/` without enabling Also ignored. Explicit exclusions
-such as `.config/**` and ignore rules still apply. These rules also govern unsaved
-buffers and Only open files.
+## Replacement and limits
 
-New unsaved names are checked by running ripgrep in a disposable tree that mirrors
-candidate names and relevant ancestor ignore files/Git excludes. No placeholder files
-are created in your project and no separate Lua glob engine approximates ripgrep.
+Searchlight validates the searched snapshot, full buffer contents, changedtick,
+pathname, write options, and disk contents/identity before applying edits, including
+after source-loading autocommands. Changed, deleted, renamed, or unsupported sources
+are skipped with reasons. Reports show applied, excluded, stale, unsupported, and
+failed counts, including partial failures. Editing displayed result rows never edits
+source files.
 
-Configuration is checked before discovery. Supported forms include long `--glob=`,
-`--iglob=`, type filters, absolute `--ignore-file=`, hidden/ignore/follow controls, and
-the planned `--max-columns`/preview/no-heading settings. The panel normalizes match
-controls itself. Unknown flags, short flags, relative `--ignore-file`, and incompatible
-output/engine settings produce a visible error; Also ignored bypasses that config.
+Replace next edits one enabled occurrence and advances to its surviving successor,
+skipping exclusions and avoiding immediate revisits to inserted text. Replace all
+needs a settled, current, complete, uncapped search. A match, inventory, output,
+source-size, or snapshot-memory limit is visible and blocks full-scope replacement;
+settled displayed matches may still be used by Replace next. Raise the relevant
+limit and refresh. `<localleader>L` changes the current session's match limit.
 
-## Replacement, refresh, and limits
+After replacement, the applying panel refreshes; other affected sessions become
+stale until explicitly refreshed. Source edits, undo/redo, writes, listing changes,
+and renames also invalidate relevant sessions without searching. Unchanged snapshots
+retain exclusions; a changed snapshot resets its old exclusions.
 
-Each match carries the exact immutable decoded snapshot searched by ripgrep and a
-separate disk fingerprint/file identity. Capture expansion comes from the same JSON
-submatch used by preview and application. Before editing, the planner validates full
-buffer contents, changedtick, pathname, write options, and disk contents/identity,
-including after source-loading autocmds. Changed, deleted, renamed, or unsupported
-sources are skipped with reasons. Partial edit failures report actual applied counts.
+**Edits stay unsaved.** Each operation creates one native undo block per source
+buffer, separate from prior edits; undo is per file, without a cross-file atomic
+undo. CRLF, UTF-8/UTF-16 BOM, Latin-1, and missing-final-newline handling are covered
+by save-and-byte-comparison tests. Newly loaded sources without a final newline
+receive `nofixendofline`; existing buffers retain their write options. Binary sources
+are omitted, and unsafe encoding/newline mappings are visibly skipped.
 
-Replace next edits exactly one enabled occurrence. Selection advances to its surviving
-successor from the original matches, skipping excluded results and avoiding immediate
-revisits to newly inserted text, including zero-width matches. Replace all requires a
-complete, uncapped generation and applies enabled matches across valid sources. Both
-wait for child processes to settle. Edits use byte ranges in descending order; arbitrary
-changes to displayed result rows never become source edits.
+## Configuration
 
-Changes immediately invalidate affected sessions, including sessions with no previous
-hits and aliases in another root. Source edits, undo/redo, writes, listing changes, and
-renames mark relevant sessions stale without launching searches. After replacement,
-the applying panel refreshes; other affected panels show stale state until refreshed. A changed snapshot visibly
-resets its old exclusions; unchanged snapshots retain exclusions.
-
-Review source buffers and save with `:write`/`:wall` yourself. A replacement operation
-has one native undo block per source buffer, separate from prior edits; there is no
-cross-file atomic undo. CRLF, UTF-8/UTF-16 BOM, Latin-1, and final-newline handling are
-covered by save-and-byte-comparison tests. Newly loaded sources without a final newline
-also get `nofixendofline` so a later explicit write preserves that absence. Existing
-buffers keep their write options. Binary sources are omitted; unsafe encoding/newline
-mapping is visibly skipped rather than guessed.
-
-Configure defaults before creating sessions:
+All available settings and their defaults:
 
 ```lua
 require('searchlight').setup({
-  match_case_sensetivity = false,
+  -- Search defaults for new sessions
+  match_case_sensetivity = false, -- use this exact API spelling
   match_whole_words = false,
   use_regular_expressions = false,
   only_search_open_files = false,
   also_search_ignored_files = false,
   context_size = 2,
+
+  -- Result syntax colors
   syntax_highlighting = true,
   syntax_injections = false,
   syntax_max_file_bytes = 128 * 1024,
-  debounce_ms = 150,
+
+  -- Scheduling and per-session limits
+  debounce_ms = 150, -- Lua set() and toggle mappings; Enter is immediate
   max_results = 10000,
   concurrency = 4,
   max_files = 100000,
@@ -323,117 +336,192 @@ require('searchlight').setup({
 })
 ```
 
-For case-sensitive regex searches by default, use
-`setup({ match_case_sensetivity = true, use_regular_expressions = true })`.
-The five modifier settings accept booleans; `context_size` accepts a nonnegative whole
-number and defaults to `2`. These defaults apply to new sessions; existing sessions
-retain their editable options through configuration reloads. The session API accepts
-`require('searchlight').set(session, { context = 3 })` to change its context size.
+The case option is spelled **`match_case_sensetivity`** in the current API.
+For case-sensitive regex searches by default, set it and
+`use_regular_expressions` to `true`. Boolean settings require booleans;
+`context_size` is a nonnegative integer. Other numbers are positive integers,
+except `debounce_ms`, which can be zero. Unknown settings are rejected.
+Existing sessions keep their captured configuration when `setup()` runs again.
 
-Each session captures its own limits. A match, inventory, output, source, or snapshot
-limit is visible and blocks full-scope replacement. Raise the relevant limit and
-refresh; capped results are useful for inspection, never proof that Replace all covers
-the scope. Only settled displayed matches can be used by Replace next.
+### Syntax colors and highlight groups
 
-Match and context code can use the source language's installed Tree-sitter parser and
-highlight query, with colors from your current colorscheme. Plain results appear first;
-syntax enrichment follows visible rows after a short debounce. No parsers are installed
-and no source buffers or LSP clients are opened for highlighting. Missing support,
-errors, oversized files and exhausted budgets leave readable plain text. Search,
-selected/excluded/stale styling and zero-width markers retain priority over syntax.
+Plain results appear first; visible code receives syntax colors after a short
+debounce. Missing parsers/queries, errors, oversized files, or exhausted budgets
+leave readable plain text. Search highlights and selected/excluded styling take
+priority. Set `syntax_highlighting = false` to disable syntax for new sessions.
 
-Disable colors for new sessions with `setup({ syntax_highlighting = false })`.
-Files over `syntax_max_file_bytes` (default 128 KiB) stay plain. Neovim parses a
-source string in one uninterrupted step, even with the callback API. The conservative
-default bounds this editor pause on slower machines. You can raise the cap to color
-larger files, at the cost of longer pauses.
-All panels share one conservative cache: two parsers, 512 KiB retained source text,
-8,192 spans, and 256 visible rows across at most eight windows. A file over 512 KiB is
-never parsed, whatever the setting. Extraction skips source lines over 4 KiB and works in
-40-line chunks.
-Each tick processes at most 1,024 captures or 3 ms of a chunk, shows the lines finished
-so far, and resumes on the next tick, so dense code still gets full colors. In-flight
-work counts against these limits. Parser trees and query libraries also consume native
-memory; these count limits are not an RSS guarantee. At most eight new languages are
-admitted; unsupported lookup and failure records are separately bounded. Missing
-parsers, query errors and filetype lookup errors suppress a file for 30 seconds. Parse
-timeouts and exhausted budgets retry automatically after 1, 2, 4… seconds (at most 30),
-without waiting for a scroll.
+Files above `syntax_max_file_bytes` stay plain. Raising the default 128 KiB cap can
+increase uninterrupted parse pauses; a shared hard cap of 512 KiB still applies.
+The global cache bounds parsers, source text, spans, and visible-row work across
+panels. Long source lines over 4 KiB are not enriched. Cooperative capture
+extraction and bounded retries keep background work controlled; these bounds do
+not guarantee a fixed process RSS.
 
-`setup({ syntax_injections = true })` also colors embedded languages, such as Markdown
-code fences and `>lua` blocks in loaded help buffers. Only injections that intersect a
-visible chunk are parsed, one level deep. Injected languages share the eight-language
-and capture budgets. A chunk whose embedded language is refused keeps parent colors
-only. Injections are off by default until their scrolling cost meets the benchmark gates.
-
-Colorscheme changes redraw existing colors. Source filetype changes update colors
-without rerunning searches. After explicitly replacing highlight queries, call
+Set `syntax_injections = true` to color visible embedded languages, such as Markdown
+code fences. Injections are one level deep and share the syntax budgets.
+Colorscheme, filetype, and runtimepath changes update colors without rerunning
+searches. After replacing highlight queries explicitly, call
 `require('searchlight.highlight').reload()` or
-`:doautocmd User SearchlightHighlightReload`; this discards query spans while retaining
-reusable snapshot parses. Runtimepath changes also invalidate query spans.
+`:doautocmd User SearchlightHighlightReload`.
 
-## Highlight groups
-
-| Group | Default color / link | Used for |
+| Group | Default | Purpose |
 | --- | --- | --- |
-| `SearchlightMatch` | `Search` | Matches in results |
-| `SearchlightSelected` | `IncSearch` | Selected match |
-| `SearchlightFilename` | Yellow (`#ffff00`) | Filename and extension in file headers |
-| `SearchlightPath` | White (`#ffffff`) | Relative directory part of file headers |
-| `SearchlightControl` | `Title` | Search option controls |
-| `SearchlightMarker` | `DiagnosticOk` | Cursor result marker |
+| `SearchlightMatch` | Follows `Search` | Result matches. |
+| `SearchlightSelected` | Follows `IncSearch` | Selected occurrence. |
+| `SearchlightFilename` | Yellow (`#ffff00`) | File header name and extension. |
+| `SearchlightPath` | White (`#ffffff`) | File header's relative directory. |
+| `SearchlightControl` | Links to `Title` | Search controls. |
+| `SearchlightMarker` | Links to `DiagnosticOk` | Result circle markers. |
 
-`SearchlightFilename`, `SearchlightPath`, `SearchlightControl` and `SearchlightMarker`
-use default definitions, so a `:highlight` definition in your config or colorscheme
-overrides them.
-`SearchlightMatch` and `SearchlightSelected` always follow `Search` and `IncSearch`.
+The last four groups use default definitions and respect your colorscheme/config
+overrides. `SearchlightMatch` and `SearchlightSelected` always follow `Search` and
+`IncSearch`.
 
-## Validation and design
+## Lua API
+
+Use a session object returned by `new()`, or its numeric ID. For example:
+
+```lua
+local searchlight = require('searchlight')
+local session = searchlight.new(vim.fn.getcwd())
+
+searchlight.set(session, {
+  query = 'config',
+  replacement = 'settings',
+  include = { '*.lua', '*.md' },
+  exclude = { 'vendor/**' },
+  case = false,
+  word = true,
+  regex = false,
+  open = false,
+  ignored = false,
+  context = 1,
+})
+searchlight.refresh(session) -- submit immediately instead of waiting for debounce
+```
+
+`set()` also accepts `root`. Filter values are lists of single-line strings, each
+of which can contain comma-separated globs. `setup()` option names and per-session
+`set()` option names differ, as shown above.
+
+| Function | Purpose |
+| --- | --- |
+| `setup(options)` | Configure defaults and register commands, mappings, and events. |
+| `new(root)` | Create, focus, and return a session. Root is optional. |
+| `focus(id)` | Focus and return a session; no ID restores the last surviving panel. |
+| `set(session, changes)` | Update fields, options, or root and debounce a search. |
+| `refresh(session)` | Search immediately with the current inputs. |
+| `navigate(session, delta)` | Move the selection by an occurrence offset. |
+| `open(session)` | Open the selected source occurrence. |
+| `action(session, name, arg)` | Invoke a panel action, such as `exclude`, `replace_next`, or `replace_all`. |
+| `close(session)` | Dispose a session and delete its panel. |
+
+For capture-aware previews after results settle:
+
+```lua
+local replace = require('searchlight.replace')
+local occurrence = replace.selected(session)
+local preview_line = replace.preview(occurrence)
+```
+
+`preview()` returns the source match line with that occurrence replaced, or `nil`
+when the occurrence is missing, stale, or lacks replacement support.
+
+## Benchmarks
+
+Measurements from **2026-10-12**, on **macOS 26.6.2 / arm64**, with **Neovim 0.12.6**
+and **ripgrep 15.2.0**. These are local synthetic, headless runs; timings depend on
+hardware, filesystem, parsers, and workload, and do not measure terminal rendering.
+
+### Search workloads
+
+One `make benchmark` run, using the default 10,000-occurrence cap:
+
+| Workload | Measured result |
+| --- | --- |
+| 200 files, 20,000 occurrences | First results **25.94 ms**; capped search settled in **300.60 ms**, displaying 10,000 occurrences. |
+| Same workload, event-loop responsiveness | 26 heartbeat callbacks; longest observed gap **15.98 ms** with a 10 ms timer. |
+| 2,000 files, no matches | Complete in **67.64 ms**, using **4 ripgrep processes**. |
+| Single `rg --json` on the no-match fixture | **22.48 ms** for context; this command does not include Searchlight's inventory, snapshot, and panel work. |
+
+The benchmark checks that the event loop keeps running, capped results reject
+Replace all, and no-hit searches avoid launching a process per file.
+
+### Syntax highlighting overhead
+
+`make syntax-benchmark` alternates fresh enabled/disabled processes for three trials
+each. The enabled workload includes **syntax injections**, which are off by default.
+Fixtures exercise dense/sparse Lua and C, large and long-line files, embedded
+languages, scrolling, replacement, and 100 panel lifecycle cycles.
+
+| Metric | Syntax off | Syntax + injections on |
+| --- | ---: | ---: |
+| First results, median | 14.56 ms | 15.99 ms |
+| Warm navigation, p95 | 0.058 ms | 0.107 ms |
+| Cached drawing, p95 | 0.088 ms | 0.254 ms |
+| Syntax-worker heartbeat gap, p95 | 0.036 ms | 1.475 ms |
+| Longest syntax-worker heartbeat gap | 0.144 ms | 15.889 ms |
+| Kernel peak process RSS, median | 139.44 MiB | 151.22 MiB |
+
+All six gates passed: first-results overhead, warm-navigation overhead, baseline
+navigation, cached-drawing overhead, heartbeat responsiveness, and RSS overhead.
+RSS includes the whole Neovim process, parsers, and benchmark workload.
+See the [search benchmark](tests/nvim/benchmark.lua) and
+[syntax benchmark gates](tests/nvim/syntax_benchmark.py) for methodology and thresholds.
+
+Reproduce from a checkout:
+
+```sh
+make benchmark
+make syntax-benchmark # also needs Python 3 and /usr/bin/time (GNU time on Linux)
+```
+
+The syntax runner prints summary measurements and writes a full JSON report to
+`/tmp/searchlight-syntax-benchmark.json` by default. Set `SEARCHLIGHT_BENCH_TRIALS`
+or `SEARCHLIGHT_BENCH_REPORT` to change the trial count or output path.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| `:SearchlightNew` is unavailable | Ensure the plugin has loaded and `setup()` has run. With command lazy loading, use a command to load it first. |
+| ripgrep is not installed | Check `:echo executable('rg')`; it must return `1` in Neovim's environment. |
+| Replacement is disabled | Check the panel message and `rg --version`. Install a build with JSON replacement/capture support; 15.2.0 is tested. |
+| Results did not change after editing | Refresh with Enter in a field or `<localleader>R`; typing does not launch a search. |
+| Replace all is blocked | Wait for the search to settle, refresh stale results, or increase the reported limit and refresh. |
+| A hidden file is missing | Check Include/Exclude and ignore rules. Hidden files are already enabled; Also ignored includes ignored paths. `.git` stays excluded. |
+| ripgrep config is rejected | Use the supported long flags described above, or enable Also ignored to bypass config and ignore rules. |
+| Missing result syntax colors | Check installed parsers/queries and file-size limits. Plain-text results remain usable. |
+| Control icons appear as boxes | Use a Nerd Font or the toggle mappings; `?` explains every control. |
+
+## Development
 
 ```sh
 make test
 make benchmark
 make syntax-benchmark
-make format-check  # optional development tool: StyLua 2.5.2
+make format-check # requires StyLua; CI uses 2.5.2
 ```
 
-CI (`.github/workflows/test.yml`) runs the tests, benchmark, and format check on Neovim
-stable and nightly on Linux and macOS, and the syntax benchmark on Linux.
+Tests isolate Neovim/XDG/log state and use real filesystem fixtures, real ripgrep,
+and an injected process driver for deterministic asynchronous failures. They require
+ripgrep's expanded JSON replacements. Files ending in `_spec.lua` are discovered
+automatically. The local suite passed **239/239 tests** for the measurements above.
 
-`make test` isolates Neovim/XDG/log state and runs built-in Lua assertions, real
-filesystem fixtures, real ripgrep, and an injected process driver for deterministic
-asynchronous failures. Tests require ripgrep's expanded JSON replacements. Test files
-ending in `_spec.lua` are discovered automatically. The direct invocation also works:
-`nvim --headless -u tests/nvim/minimal_init.lua -l tests/nvim/run.lua`.
+[CI](.github/workflows/test.yml) runs tests and search benchmarks on Neovim stable
+and nightly on Linux and macOS, checks formatting, and runs the syntax benchmark
+on Linux.
 
-`input.lua` defines controls and pure input rules; `init.lua` coordinates input
-origins and decides whether to invalidate, debounce, or submit. `view.lua` reads
-editable regions and renders synchronized state, using one panel edit attachment
-and preserving cursor, scroll, and undo behavior. Rendering does not launch searches.
-`sessions.lua` owns session lifetime and panel window options; `actions.lua` owns
-navigation and opening, and `observe.lua` invalidates affected source snapshots.
+```text
+lua/searchlight/  Plugin modules and public init.lua facade
+tests/nvim/      Isolated test configuration, fixtures, assertions, and benchmarks
+tests/prototype/ Backend evaluation adapter
+```
 
-`search.lua` freezes each generation's request and runs named inventory, snapshot,
-matching, and completion phases. Its private job group distinguishes cancellation
-from handle settlement. `process.start(argv, opts, done)` remains the replaceable
-test boundary; `scope.lua`, `sources.lua`, and `rg.lua` own eligibility, immutable
-snapshots/edit validation, and ripgrep arguments/decoding. `results.lua` owns
-occurrence order and selection and shares compact file/block geometry between
-rendering and syntax mappings. `replace.lua` freezes targets, prepares and revalidates
-source plans, applies unsaved edits, and reports actual outcomes. `highlight.lua`
-owns one global bounded cache, viewport demands, and cooperative workers; decoration
-callbacks only draw cached spans and request work. Repeating `setup()` preserves sessions.
+The public facade coordinates sessions and actions; scope/source modules own
+eligibility, snapshots, and edit validation. Results and view modules own occurrence
+selection and panel layout, while the highlight module owns the shared syntax cache.
+`process.start(argv, opts, done)` is the replaceable process boundary for tests.
 
-The Lua facade retains `setup`, `new`, `focus`, `close`, `set`, `refresh`, `navigate`,
-`open`, and `action`. Existing module helpers, including `replace.selected()`,
-`replace.preview()`, and `highlight.reload()`, remain callable. Selection itself has
-one implementation in `results.lua`.
-
-The syntax benchmark compares fresh enabled/disabled processes with syntax-bearing
-fixtures, kernel peak RSS, heartbeat gaps, warm navigation, drawing, and 100 lifecycle
-cycles.
-
-Native edits invalidate without searching, Enter/refresh submit immediately, and
-`set()`/toggle mappings debounce. Results use the compact layout shown above;
-capture expansion remains available in occurrence replacement values and
-`replace.preview()`, without an extra preview row.
+For bugs or feature requests, [open an issue](https://github.com/dmytr0x/searchlight/issues)
+with your Neovim/ripgrep versions, relevant configuration, and a minimal reproduction.

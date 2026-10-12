@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="678" viewBox="0 0 940 678" role="img" aria-labelledby="title description">
+<title id="title">Searchlight: editable fields and grouped search results</title>
+<desc id="description">A panel generated from actual Neovim results for config in two Lua files. Seven occurrences share numbered source lines. The third occurrence is selected in amber; one excluded occurrence is dimmed. Icon labels are expanded to Open and Ignored.</desc>
+<rect width="940" height="678" rx="14" fill="#191b26"/>
+<path d="M14 0H926Q940 0 940 14V54H0V14Q0 0 14 0" fill="#252735"/>
+<text x="24" y="34" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16">searchlight://1/config</text>
+<text x="916" y="34" text-anchor="end" fill="#a8afc2" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13">2 files · 7 occurrences</text>
+<text x="24.0" y="82" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Search]    Aa[ ]  wd[ ]  .*[ ]  Open[ ]  Ignored[ ]  ↕[1]</text>
+<text x="24.0" y="105" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="24.0" y="128" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Replace]</text>
+<text x="24.0" y="151" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">settings</text>
+<text x="24.0" y="174" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Include]</text>
+<text x="24.0" y="197" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">*.lua</text>
+<text x="24.0" y="220" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Exclude]</text>
+<text x="24.0" y="243" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">vendor/**</text>
+<text x="24.0" y="289" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Results]  3/7</text>
+<rect x="24.0" y="295" width="110.4" height="22" rx="2" fill="#252735"/>
+<text x="24.0" y="312" fill="#f6d77b" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">▾ client.lua</text>
+<rect x="134.4" y="295" width="18.4" height="22" rx="2" fill="#252735"/>
+<text x="134.4" y="312" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<rect x="152.8" y="295" width="36.8" height="22" rx="2" fill="#252735"/>
+<text x="152.8" y="312" fill="#a8afc2" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">lua/</text>
+<text x="24.0" y="335" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<text x="42.4" y="335" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">○</text>
+<text x="51.6" y="335" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   1 | </text>
+<text x="116.0" y="335" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">local </text>
+<rect x="171.2" y="318" width="55.2" height="22" rx="2" fill="#244a3d"/>
+<text x="171.2" y="335" fill="#a2edc4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="226.4" y="335" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve"> = require(&quot;</text>
+<text x="336.8" y="335" fill="#6f778d" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="392.0" y="335" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">&quot;)</text>
+<text x="24.0" y="358" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">      2 | </text>
+<text x="24.0" y="381" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">      3 | </text>
+<text x="116.0" y="381" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">local function connect()</text>
+<text x="24.0" y="404" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">&gt; </text>
+<text x="42.4" y="404" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">●</text>
+<text x="51.6" y="404" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   4 | </text>
+<text x="116.0" y="404" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  return </text>
+<rect x="198.8" y="387" width="55.2" height="22" rx="2" fill="#f6c778"/>
+<text x="198.8" y="404" fill="#1c1e2a" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="254.0" y="404" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">.timeout</text>
+<text x="24.0" y="427" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">      5 | </text>
+<text x="116.0" y="427" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">end</text>
+<rect x="24.0" y="456" width="110.4" height="22" rx="2" fill="#252735"/>
+<text x="24.0" y="473" fill="#f6d77b" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">▾ config.lua</text>
+<rect x="134.4" y="456" width="18.4" height="22" rx="2" fill="#252735"/>
+<text x="134.4" y="473" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<rect x="152.8" y="456" width="36.8" height="22" rx="2" fill="#252735"/>
+<text x="152.8" y="473" fill="#a8afc2" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">lua/</text>
+<text x="24.0" y="496" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<text x="42.4" y="496" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">○</text>
+<text x="51.6" y="496" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   1 | </text>
+<text x="116.0" y="496" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">local </text>
+<rect x="171.2" y="479" width="55.2" height="22" rx="2" fill="#244a3d"/>
+<text x="171.2" y="496" fill="#a2edc4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="226.4" y="496" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve"> = {}</text>
+<text x="24.0" y="519" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">      2 | </text>
+<text x="24.0" y="542" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<text x="42.4" y="542" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">○</text>
+<text x="51.6" y="542" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   3 | </text>
+<rect x="116.0" y="525" width="55.2" height="22" rx="2" fill="#244a3d"/>
+<text x="116.0" y="542" fill="#a2edc4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="171.2" y="542" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">.timeout = 1000</text>
+<text x="24.0" y="565" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<text x="42.4" y="565" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">○</text>
+<text x="51.6" y="565" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   4 | </text>
+<rect x="116.0" y="548" width="55.2" height="22" rx="2" fill="#244a3d"/>
+<text x="116.0" y="565" fill="#a2edc4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="171.2" y="565" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">.retries = 3</text>
+<text x="24.0" y="588" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">      5 | </text>
+<text x="24.0" y="611" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">  </text>
+<text x="42.4" y="611" fill="#8bd5a0" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">○</text>
+<text x="51.6" y="611" fill="#777f96" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">   6 | </text>
+<text x="116.0" y="611" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">return </text>
+<rect x="180.4" y="594" width="55.2" height="22" rx="2" fill="#244a3d"/>
+<text x="180.4" y="611" fill="#a2edc4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>
+<text x="24" y="656" fill="#a8afc2" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13">Enter open / refresh   n / N navigate   Space exclude   ? help</text>
+</svg>
