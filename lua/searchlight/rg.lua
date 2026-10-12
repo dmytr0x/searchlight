@@ -1,5 +1,5 @@
 local M = {}
-local capability
+local capability, probing, waiting = nil, false, {}
 
 function M.value(value)
   if not value or value == vim.NIL then
@@ -14,29 +14,51 @@ function M.value(value)
   error('Malformed ripgrep byte value')
 end
 
-function M.probe()
-  if capability then
-    return capability
-  end
-  capability = { search = vim.fn.executable('rg') == 1, replacement = false }
-  if not capability.search then
-    capability.reason = 'ripgrep is not installed'
-    return capability
-  end
-  local out = vim
-    .system(
-      { 'rg', '--no-config', '--json', '--replace=$1!', '--', '(a)', '-' },
-      { stdin = 'a\n', text = true }
-    )
-    :wait(2000)
+local function probed(out)
+  local result = { search = true, replacement = false }
   for line in (out.stdout or ''):gmatch('[^\n]+') do
     local ok, item = pcall(vim.json.decode, line)
     if ok and item.type == 'match' then
-      capability.replacement = M.value(item.data.submatches[1].replacement) == 'a!'
+      result.replacement = M.value(item.data.submatches[1].replacement) == 'a!'
     end
   end
-  if not capability.replacement then
-    capability.reason = 'ripgrep JSON capture expansion unavailable; replacement disabled'
+  if not result.replacement then
+    result.reason = 'ripgrep JSON capture expansion unavailable; replacement disabled'
+  end
+  return result
+end
+
+-- Returns the ripgrep capability, or nil while the probe runs; `on_ready` then runs
+-- on the main loop once it settles. The first call starts the probe.
+function M.probe(on_ready)
+  if not capability and not probing then
+    if vim.fn.executable('rg') ~= 1 then
+      capability = { search = false, replacement = false, reason = 'ripgrep is not installed' }
+    else
+      probing = true
+      local ok = pcall(
+        vim.system,
+        { 'rg', '--no-config', '--json', '--replace=$1!', '--', '(a)', '-' },
+        { stdin = 'a\n', text = true, timeout = 2000 },
+        vim.schedule_wrap(function(out)
+          -- Always settle, so waiting searches never hang on a malformed probe.
+          local parsed, result = pcall(probed, out)
+          capability, probing = parsed and result or probed({}), false
+          local callbacks = waiting
+          waiting = {}
+          for _, callback in ipairs(callbacks) do
+            callback()
+          end
+        end)
+      )
+      if not ok then
+        probing = false
+        capability = probed({})
+      end
+    end
+  end
+  if not capability and on_ready then
+    table.insert(waiting, on_ready)
   end
   return capability
 end

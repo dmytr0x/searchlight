@@ -1,10 +1,11 @@
 local input = require('searchlight.input')
 local sessions = require('searchlight.sessions')
-local search = require('searchlight.search')
 local scope = require('searchlight.scope')
+local rg = require('searchlight.rg')
 local view = require('searchlight.view')
 local actions = require('searchlight.actions')
 local observe = require('searchlight.observe')
+local controller = require('searchlight.controller')
 local M = {
   config = vim.tbl_extend('force', input.defaults, {
     syntax_highlighting = true,
@@ -19,12 +20,6 @@ local M = {
     max_snapshot_bytes = 64 * 1024 * 1024,
   }),
 }
-
-local function own(s)
-  s = sessions.get(s)
-  assert(s, 'No owning Searchlight session')
-  return s
-end
 
 function M.new(root)
   root = scope.path(root and root ~= '' and root or vim.fn.getcwd())
@@ -46,59 +41,12 @@ function M.focus(id)
   return s
 end
 
-function M.close(s)
-  s = own(s)
-  sessions.dispose(s)
-  if vim.api.nvim_buf_is_valid(s.buf) then
-    vim.api.nvim_buf_delete(s.buf, { force = true })
-  end
-end
-
--- Every input origin comes through this coordinator. Reading regions reports changes;
--- only the coordinator chooses whether they invalidate, debounce or submit immediately.
-function M._synchronize(s, origin, changes)
-  local read = view.read(s)
-  if read then
-    for name, value in pairs(read.fields) do
-      s.fields[name] = value
-    end
-    s.options, s.search_heading = read.options, read.heading
-  end
-  local changed = s.input_changed or read and read.changed or false
-  if origin == 'capture' then
-    s.input_changed = changed or nil
-    return changed
-  end
-  s.input_changed = nil
-  if origin == 'set' then
-    local next_input = input.update(s, changes, scope.path)
-    s.fields, s.options, s.root = next_input.fields, next_input.options, next_input.root
-    s.search_heading = next_input.heading
-    s.fields_dirty, s.navigation_end, s.selection_after = true, false, nil
-    search.invalidate(s)
-  elseif origin == 'refresh' then
-    search.refresh(s)
-  elseif changed then
-    search.invalidate(s, '', false)
-  end
-  sessions.sync_name(s)
-  return changed
-end
-
-function M.set(s, changes)
-  s = own(s)
-  M._synchronize(s, 'set', changes)
-  view.render(s)
-end
-
-function M.refresh(s)
-  s = own(s)
-  M._synchronize(s, 'refresh')
-end
-
+M.close = controller.close
+M.set = controller.set
+M.refresh = controller.refresh
 M.navigate = actions.navigate
 M.open = actions.open
-M.action = actions.action
+M.action = controller.action
 
 function M.setup(options)
   assert(
@@ -147,5 +95,6 @@ function M.setup(options)
     end
   end
   observe.setup()
+  rg.probe()
 end
 return M

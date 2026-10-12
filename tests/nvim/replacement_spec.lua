@@ -583,3 +583,17 @@ H.test(
     assert(s.message:find('Exclusions reset'))
   end
 )
+H.test('the panel and the message report the same apply counts', 'R-06', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc\n')
+  H.write(a .. '/two', 'abc\n')
+  local s = H.search(a)
+  s.results[2].enabled, s.exclusions[s.results[2].id] = false, true
+  H.eq(p.action(s, 'replace_all').applied, 1)
+  H.wait(s)
+  local summary = '1 applied, 1 excluded, 0 stale, 0 unsupported, 0 failed'
+  H.eq(replace.summary(s.report), summary)
+  H.eq(s.message, summary)
+  local lines = vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
+  assert(vim.tbl_contains(lines, 'Last apply: ' .. summary), vim.inspect(lines))
+end)

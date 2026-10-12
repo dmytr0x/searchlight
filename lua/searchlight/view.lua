@@ -1,5 +1,7 @@
 local sessions = require('searchlight.sessions')
 local results = require('searchlight.results')
+local replace = require('searchlight.replace')
+local controller = require('searchlight.controller')
 local syntax = require('searchlight.highlight')
 local M = { namespace = vim.api.nvim_create_namespace('searchlight') }
 local panel_colors = vim.api.nvim_create_namespace('searchlight_panel_colors')
@@ -319,16 +321,7 @@ local function build_layout(s)
     add(s.message:gsub('[\r\n]', ' '))
   end
   if s.report then
-    add(
-      string.format(
-        'Last apply: %d applied, %d excluded, %d stale, %d unsupported, %d failed',
-        s.report.applied,
-        s.report.excluded,
-        s.report.stale,
-        s.report.unsupported,
-        s.report.failed
-      )
-    )
+    add('Last apply: ' .. replace.summary(s.report))
   end
   add('')
   s.results_header_row = add(results.header(s))
@@ -606,14 +599,14 @@ function M.request_render(s)
   vim.schedule(function()
     s.render_pending = false
     if sessions.owns(s) and s.generation == s.render_generation then
-      require('searchlight')._synchronize(s, 'native')
+      controller.synchronize(s, 'native')
       M.render(s)
     end
   end)
 end
 
 function M.focus_field(s, name)
-  require('searchlight')._synchronize(s, 'display')
+  controller.synchronize(s, 'display')
   if name == 'replacement' then
     s.sections.replace = true
   end
@@ -646,7 +639,7 @@ local function attach_edits(s)
         owner.layout_invalid = true
         syntax.invalidate(owner)
         -- Capture input under textlock; synchronize and repair once on the main loop.
-        require('searchlight')._synchronize(owner, 'capture')
+        controller.synchronize(owner, 'capture')
         M.request_render(owner)
       end
     end,
@@ -670,7 +663,7 @@ local function register_events(s)
     callback = function()
       -- An unchanged tick means the last change was a render or selection patch.
       if not s.rendering and not M.layout_fresh(s) then
-        require('searchlight')._synchronize(s, 'native')
+        controller.synchronize(s, 'native')
         M.request_render(s)
       end
     end,
@@ -702,7 +695,7 @@ local function register_mappings(s)
   local function action(name, arg)
     return function()
       if sessions.owns(s) then
-        require('searchlight').action(s, name, arg)
+        controller.action(s, name, arg)
       end
     end
   end
@@ -743,7 +736,7 @@ local function register_mappings(s)
   for key, direction in pairs({ n = 1, N = -1 }) do
     vim.keymap.set('n', key, function()
       if sessions.owns(s) then
-        require('searchlight').action(s, 'search_next', direction * vim.v.count1)
+        controller.action(s, 'search_next', direction * vim.v.count1)
       end
     end, {
       buffer = s.buf,

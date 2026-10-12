@@ -20,8 +20,9 @@ local function ready(s, all)
   if next(s.pending_jobs) then
     return nil, 'Replacement waits for all process handles to settle'
   end
-  if not rg.probe().replacement then
-    return nil, rg.probe().reason
+  local capability = rg.probe()
+  if not (capability and capability.replacement) then
+    return nil, capability and capability.reason or 'ripgrep capability check is still running'
   end
   if s.status ~= 'complete' and (all or s.status ~= 'truncated') then
     return nil, 'Replacement requires settled, current results; refresh first'
@@ -32,15 +33,19 @@ local function ready(s, all)
   return true
 end
 
-local function report_text(report)
-  local text = string.format(
-    'Applied %d; excluded %d; stale %d; unsupported %d; failed %d',
+function M.summary(report)
+  return string.format(
+    '%d applied, %d excluded, %d stale, %d unsupported, %d failed',
     report.applied,
     report.excluded,
     report.stale,
     report.unsupported,
     report.failed
   )
+end
+
+local function report_text(report)
+  local text = M.summary(report)
   for _, detail in ipairs(report.details) do
     text = text .. ' | ' .. detail.path .. ': ' .. detail.reason
   end

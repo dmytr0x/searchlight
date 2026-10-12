@@ -1,6 +1,10 @@
 local H = dofile('tests/nvim/helpers.lua')
 local p = require('searchlight')
 p.setup({ debounce_ms = 10 })
+-- Launches below expect the startup ripgrep probe to have settled.
+assert(vim.wait(5000, function()
+  return require('searchlight.rg').probe() ~= nil
+end))
 local a = H.fixture()
 for i = 1, 200 do
   H.write(a .. string.format('/file%03d.txt', i), string.rep('abc abc abc abc\n', 25))

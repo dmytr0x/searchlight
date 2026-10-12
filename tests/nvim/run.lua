@@ -6,6 +6,10 @@ package.loaded['tests.helpers'] = H
 vim.api.nvim__inspect_cell(1, 0, 0)
 local p = require('searchlight')
 p.setup({ debounce_ms = 10 })
+-- Launches below expect the startup ripgrep probe to have settled.
+assert(vim.wait(5000, function()
+  return require('searchlight.rg').probe() ~= nil
+end))
 local files = {}
 io.stdout:setvbuf('no')
 -- Keep mode and file/search messages out of the PASS/FAIL stream.

@@ -4,6 +4,8 @@ local rg = require('searchlight.rg')
 local scope = require('searchlight.scope')
 local sources = require('searchlight.sources')
 local process = require('searchlight.process')
+local util = require('searchlight.util')
+local controller = require('searchlight.controller')
 local M = {}
 
 local function current(s, gen)
@@ -28,11 +30,7 @@ end
 
 function M.cancel(s)
   require('searchlight.highlight').invalidate(s)
-  if s.timer then
-    s.timer:stop()
-    s.timer:close()
-    s.timer = nil
-  end
+  s.timer = util.close_timer(s.timer)
   if s.job_group then
     cancel_group(s.job_group)
     s.job_group = nil
@@ -62,8 +60,7 @@ function M.invalidate(s, reason, launch)
       0,
       vim.schedule_wrap(function()
         if current(s, gen) then
-          s.timer:close()
-          s.timer = nil
+          s.timer = util.close_timer(s.timer)
           M.launch(s, gen)
         end
       end)
@@ -594,27 +591,21 @@ local function prefilter_sources(run)
     match_sources(run)
   end
   for _, job in ipairs(jobs) do
-    local carry = ''
-    start_job(run.group, job.argv, { cwd = request.root }, function(data)
-      carry = carry .. data
-      while true do
-        local pos = carry:find('\0', 1, true)
-        if not pos then
-          break
-        end
-        local path = relative[carry:sub(1, pos - 1)]
-        carry = carry:sub(pos + 1)
-        if not path then
-          failed = true
-        else
-          candidates[path] = true
-          if job.hit then
-            hits[path] = true
-          end
+    local split = rg.split('\0', function(rel)
+      local path = relative[rel]
+      if not path then
+        failed = true
+      else
+        candidates[path] = true
+        if job.hit then
+          hits[path] = true
         end
       end
+    end, request.config.max_output_bytes)
+    start_job(run.group, job.argv, { cwd = request.root }, function(data)
+      split(data, false)
     end, function(out)
-      if not out or out.code ~= 0 and out.code ~= 1 or carry ~= '' then
+      if not out or out.code ~= 0 and out.code ~= 1 or split(nil, true) ~= '' then
         failed = true
       end
       settle()
@@ -683,7 +674,10 @@ function M.launch(s, gen)
   if not current(s, gen) or s.fields.query == '' then
     return
   end
-  require('searchlight')._synchronize(s, 'launch')
+  if not rg.probe(function() M.launch(s, gen) end) then
+    return
+  end
+  controller.synchronize(s, 'launch')
   if not current(s, gen) or s.fields.query == '' then
     return
   end
@@ -702,11 +696,7 @@ end
 
 function M.refresh(s)
   M.invalidate(s)
-  if s.timer then
-    s.timer:stop()
-    s.timer:close()
-    s.timer = nil
-  end
+  s.timer = util.close_timer(s.timer)
   M.launch(s, s.generation)
 end
 
@@ -718,7 +708,7 @@ function M.source_changed(path, launch, generations)
   for _, s in pairs(sessions.by_id) do
     local snap = s.snapshots[path]
     if snap and snap.disk.exists then
-      identities['file:' .. snap.disk.dev .. ':' .. snap.disk.ino] = true
+      identities[scope.identity_of(snap.disk)] = true
     end
   end
   for _, s in pairs(sessions.by_id) do
@@ -728,7 +718,7 @@ function M.source_changed(path, launch, generations)
     end
     if not affected then
       for _, snap in pairs(s.snapshots) do
-        if snap.disk.exists and identities['file:' .. snap.disk.dev .. ':' .. snap.disk.ino] then
+        if snap.disk.exists and identities[scope.identity_of(snap.disk)] then
           affected = true
           break
         end

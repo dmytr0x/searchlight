@@ -25,9 +25,13 @@ function M.relative(root, path)
   return root == '/' and path:sub(2) or path:sub(#root + 2)
 end
 
+function M.identity_of(stat)
+  return 'file:' .. stat.dev .. ':' .. stat.ino
+end
+
 function M.identity(path)
   local stat = uv.fs_stat(path)
-  return stat and ('file:' .. stat.dev .. ':' .. stat.ino) or ('path:' .. path)
+  return stat and M.identity_of(stat) or ('path:' .. path)
 end
 
 function M.metadata(root, path)

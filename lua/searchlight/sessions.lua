@@ -108,6 +108,11 @@ function M.get(id)
   end
   return M.by_buf[vim.api.nvim_get_current_buf()]
 end
+function M.own(s)
+  s = M.get(s)
+  assert(s, 'No owning Searchlight session')
+  return s
+end
 function M.create(root, config)
   M.next_id = M.next_id + 1
   local buf = vim.api.nvim_create_buf(true, false)

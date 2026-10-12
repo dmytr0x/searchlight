@@ -5,6 +5,10 @@ local view = require('searchlight.view')
 local syntax = require('searchlight.highlight')
 local enabled = vim.env.SEARCHLIGHT_SYNTAX == '1'
 p.setup({ debounce_ms = 10, syntax_highlighting = enabled, syntax_injections = enabled })
+-- Launches below expect the startup ripgrep probe to have settled.
+assert(vim.wait(5000, function()
+  return require('searchlight.rg').probe() ~= nil
+end))
 local root = H.fixture()
 local samples, first_results, navigation, drawing, scrolling, memory = {}, {}, {}, {}, {}, {}
 local heartbeat_gaps = {}

@@ -321,3 +321,48 @@ H.test('older ripgrep can search but cannot guess replacement expansion', 'R-02,
     error(err)
   end
 end)
+H.test('a slow ripgrep probe blocks neither setup nor an early search', 'R-02', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc\n')
+  local bin, script = H.root .. '/bin', H.root .. '/child.lua'
+  -- Only the capability probe is slow; searches run the real ripgrep.
+  H.write(
+    bin .. '/rg',
+    "#!/bin/sh\ncase \"$*\" in *'--replace=$1!'*) sleep 1;; esac\nexec '"
+      .. vim.fn.exepath('rg')
+      .. "' \"$@\"\n"
+  )
+  vim.uv.fs_chmod(bin .. '/rg', 493)
+  H.write(
+    script,
+    string.format(
+      [[
+vim.opt.runtimepath:prepend(%q)
+local started = vim.uv.hrtime()
+local p = require('searchlight')
+p.setup({ debounce_ms = 10 })
+local setup_ms = (vim.uv.hrtime() - started) / 1e6
+local s = p.new(%q)
+p.set(s, { query = 'abc' })
+p.refresh(s)
+local early = s.status
+vim.wait(5000, function() return s.status == 'complete' or s.status == 'error' end, 10)
+io.stdout:write(vim.json.encode({ setup_ms = setup_ms, early = early, status = s.status, results = #s.results }))
+vim.cmd.qa({ bang = true })
+]],
+      vim.fn.getcwd(),
+      a
+    )
+  )
+  local out = vim
+    .system({ 'nvim', '--headless', '-u', 'NONE', '-l', script }, {
+      env = { PATH = bin .. ':' .. vim.env.PATH },
+      text = true,
+    })
+    :wait(10000)
+  H.eq(out.code, 0, out.stderr)
+  local child = vim.json.decode(out.stdout)
+  assert(child.setup_ms < 500, 'setup blocked for ' .. child.setup_ms .. ' ms')
+  H.eq(child.early, 'waiting')
+  H.eq({ child.status, child.results }, { 'complete', 1 })
+end)

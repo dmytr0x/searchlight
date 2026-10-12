@@ -5,6 +5,16 @@ local scope = require('searchlight.scope')
 local sources = require('searchlight.sources')
 local M = { watched = {} }
 
+local function generations(filter)
+  local result = {}
+  for id, s in pairs(sessions.by_id) do
+    if not filter or filter(s) then
+      result[id] = s.generation
+    end
+  end
+  return result
+end
+
 local function watch(buf)
   if
     M.watched[buf]
@@ -23,13 +33,10 @@ local function watch(buf)
       end
       local path = M.watched[buf]
       if path then
-        local generations = {}
-        for id, s in pairs(sessions.by_id) do
-          generations[id] = s.generation
-        end
+        local current = generations()
         vim.schedule(function()
           -- An explicit search started after this edit already sees the new text.
-          search.source_changed(path, false, generations)
+          search.source_changed(path, false, current)
         end)
       end
     end,
@@ -75,13 +82,9 @@ function M.setup()
         if event.event == 'BufAdd' and vim.uv.fs_stat(path) then
           -- Listing an existing file changes open-file scope, not its contents.
           -- Keep disk searches fresh when a result is opened through :edit.
-          local generations = {}
-          for id, s in pairs(sessions.by_id) do
-            if s.options.open then
-              generations[id] = s.generation
-            end
-          end
-          search.source_changed(path, false, generations)
+          search.source_changed(path, false, generations(function(s)
+            return s.options.open
+          end))
         else
           search.source_changed(path)
         end

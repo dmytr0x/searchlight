@@ -3,16 +3,12 @@ local sessions = require('searchlight.sessions')
 local view = require('searchlight.view')
 local replace = require('searchlight.replace')
 local results = require('searchlight.results')
+local controller = require('searchlight.controller')
 local M = {}
-local function own(s)
-  s = sessions.get(s)
-  assert(s, 'No owning Searchlight session')
-  return s
-end
 
 function M.navigate(s, delta, wrap)
-  s = own(s)
-  require('searchlight')._synchronize(s, 'display')
+  s = sessions.own(s)
+  controller.synchronize(s, 'display')
   local _, index = results.selected(s)
   if wrap ~= nil and vim.api.nvim_get_current_buf() == s.buf then
     -- Async results may have arrived since the last scheduled redraw.
@@ -82,8 +78,8 @@ local function source_search(pattern)
 end
 
 function M.open(s)
-  s = own(s)
-  require('searchlight')._synchronize(s, 'display')
+  s = sessions.own(s)
+  controller.synchronize(s, 'display')
   local result = results.selected(s)
   if not result then
     return
@@ -109,13 +105,13 @@ function M.open(s)
 end
 
 function M.action(s, name, arg)
-  s = own(s)
-  require('searchlight')._synchronize(s, 'display')
+  s = sessions.own(s)
+  controller.synchronize(s, 'display')
   local cursor = vim.api.nvim_get_current_buf() == s.buf and vim.api.nvim_win_get_cursor(0)
   local path = cursor and (s.file_rows or {})[cursor[1]]
   if name == 'enter' then
     if view.field_at_cursor(s) or cursor and cursor[1] == 1 then
-      return require('searchlight').refresh(s)
+      return controller.refresh(s)
     end
     name = 'open'
   end
@@ -131,7 +127,7 @@ function M.action(s, name, arg)
     end
   end
   if name == 'toggle' then
-    require('searchlight').set(s, { [arg] = not s.options[arg] })
+    controller.set(s, { [arg] = not s.options[arg] })
   elseif name == 'section' then
     s.sections[arg] = not s.sections[arg]
     view.render(s)
@@ -166,7 +162,7 @@ function M.action(s, name, arg)
       view.render(s)
     end
   elseif name == 'refresh' then
-    require('searchlight').refresh(s)
+    controller.refresh(s)
   elseif name == 'replace_next' then
     return replace.apply(s, false)
   elseif name == 'replace_all' then
@@ -180,11 +176,11 @@ function M.action(s, name, arg)
       end
     end
   elseif name == 'close' then
-    require('searchlight').close(s)
+    controller.close(s)
   elseif name == 'root' then
     vim.ui.input({ prompt = 'Search root: ', default = s.root, completion = 'dir' }, function(value)
       if value and sessions.owns(s) then
-        require('searchlight').set(s, { root = value })
+        controller.set(s, { root = value })
       end
     end)
   elseif name == 'limit' then
@@ -194,7 +190,7 @@ function M.action(s, name, arg)
         local limit = tonumber(value)
         if limit and limit > 0 and limit == math.floor(limit) and sessions.owns(s) then
           s.config.max_results = limit
-          require('searchlight').refresh(s)
+          controller.refresh(s)
         end
       end
     )
