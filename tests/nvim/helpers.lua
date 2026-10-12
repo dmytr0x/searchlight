@@ -87,6 +87,34 @@ function H.lines(path)
   end
   error('No source buffer for ' .. path)
 end
+-- Returns { [byte_col] = { [group] = true } } for 0-based buffer `row` as last drawn in `win`.
+-- Groups are reported after link resolution; off-screen columns are absent. Redraw first.
+function H.cell_groups(win, row)
+  local buf = vim.api.nvim_win_get_buf(win)
+  local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, true)[1]
+  local groups = {}
+  for col = 0, #line - 1 do
+    local position = vim.fn.screenpos(win, row + 1, col + 1)
+    if position.row > 0 then
+      groups[col] = {}
+      local cell = vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1)
+      for _, item in ipairs(cell[3]) do
+        groups[col][item.hi_name] = true
+      end
+    end
+  end
+  return groups
+end
+-- The group that `name` resolves to in the global namespace, as H.cell_groups reports it.
+-- Undefined dotted groups such as `@string.lua` fall back to their parent, as when drawn.
+function H.resolved_group(name)
+  local hl = vim.api.nvim_get_hl(0, { name = name, create = false })
+  if hl.link then
+    return H.resolved_group(hl.link)
+  end
+  local parent = next(hl) == nil and name:match('^(.+)%.[^.]+$')
+  return parent and H.resolved_group(parent) or name
+end
 function H.cleanup()
   local registry = require('searchlight.sessions')
   local existing = {}

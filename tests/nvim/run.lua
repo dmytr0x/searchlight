@@ -8,6 +8,9 @@ local p = require('searchlight')
 p.setup({ debounce_ms = 10 })
 local files = {}
 io.stdout:setvbuf('no')
+-- Keep mode and file/search messages out of the PASS/FAIL stream.
+vim.opt.shortmess:append('sWFS')
+vim.o.showmode = false
 for name, kind in vim.fs.dir('tests/nvim') do
   if kind == 'file' and name:match('_spec%.lua$') then
     table.insert(files, name)

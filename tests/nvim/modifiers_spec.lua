@@ -348,7 +348,7 @@ H.test('native undo refreshes edited modifiers and their search results', 'Q-01,
   H.eq(vim.api.nvim_win_get_cursor(0), { 1, #'[Search]    Aa[' })
   generation = s.generation
   vim.api.nvim_buf_call(s.buf, function()
-    vim.cmd('undo')
+    vim.cmd('silent undo')
   end)
   wait_for_edit(s, generation)
   H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, 1, false), {

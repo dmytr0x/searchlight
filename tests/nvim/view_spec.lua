@@ -402,7 +402,7 @@ H.test('query paste deletion and native panel undo remain editable', 'Q-01', fun
     return s.status == 'complete' and s.fields.query == 'xyz'
   end, 5))
   vim.api.nvim_buf_call(s.buf, function()
-    vim.cmd('undo')
+    vim.cmd('silent undo')
   end)
   assert(vim.wait(5000, function()
     return s.fields.query == 'abc'

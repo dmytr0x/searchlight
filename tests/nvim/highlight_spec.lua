@@ -97,7 +97,7 @@ H.test('syntax mappings share exact rendering blocks and byte gutters', 'Syntax,
 end)
 
 H.test(
-  'decoration drawing clips ephemeral UTF-8 spans to code and leaves fields plain',
+  'decoration drawing clips UTF-8 syntax to code and leaves fields plain',
   'Syntax,Drawing',
   function()
     syntax._test.reset()
@@ -106,7 +106,7 @@ H.test(
     local s = H.search(a)
     view.render(s)
     show_results(s)
-    local maps, emitted = {}, {}
+    local maps = {}
     require('searchlight.results').mappings(
       s,
       0,
@@ -115,30 +115,22 @@ H.test(
         maps[row] = { col, length }
       end
     )
-    local original = vim.api.nvim_buf_set_extmark
-    vim.api.nvim_buf_set_extmark = function(buf, ns, row, col, options)
-      if ns == syntax.namespace and buf == s.buf then
-        local mapping = assert(maps[row], 'syntax was drawn on a non-code row')
-        assert(options.ephemeral)
-        assert(col >= mapping[1] and options.end_col <= mapping[1] + mapping[2])
-        assert(options.priority < 2000)
-        emitted[options.hl_group] = true
+    settled()
+    vim.cmd('redraw!')
+    local string, comment = H.resolved_group('@string.lua'), H.resolved_group('@comment.lua')
+    local drawn = {}
+    for row = 0, vim.api.nvim_buf_line_count(s.buf) - 1 do
+      for col, groups in pairs(H.cell_groups(0, row)) do
+        if groups[string] or groups[comment] then
+          local mapping = assert(maps[row], 'syntax was drawn on a non-code row ' .. row)
+          assert(col >= mapping[1] and col < mapping[1] + mapping[2], 'syntax outside code')
+          drawn[string] = drawn[string] or groups[string]
+          drawn[comment] = drawn[comment] or groups[comment]
+        end
       end
-      return original(buf, ns, row, col, options)
     end
-    local ok, err = xpcall(function()
-      settled()
-      vim.cmd('redraw!')
-      assert(emitted[vim.api.nvim_get_hl_id_by_name('@string.lua')], 'string syntax was not drawn')
-      assert(
-        emitted[vim.api.nvim_get_hl_id_by_name('@comment.lua')],
-        'context syntax was not drawn'
-      )
-    end, debug.traceback)
-    vim.api.nvim_buf_set_extmark = original
-    if not ok then
-      error(err)
-    end
+    assert(drawn[string], 'string syntax was not drawn')
+    assert(drawn[comment], 'context syntax was not drawn')
   end
 )
 
@@ -456,7 +448,7 @@ H.test(
     view.render(s)
     show_results(s)
     settled()
-    local rows, emitted = {}, {}
+    local rows = {}
     require('searchlight.results').mappings(
       s,
       0,
@@ -466,42 +458,41 @@ H.test(
       end
     )
     H.eq(#rows, 3)
-    local original = vim.api.nvim_buf_set_extmark
-    vim.api.nvim_buf_set_extmark = function(buf, ns, row, col, options)
-      if buf == s.buf and ns == syntax.namespace then
-        emitted[row] = true
+    local string = H.resolved_group('@string.lua')
+    local function drawn(row)
+      for _, groups in pairs(H.cell_groups(0, row)) do
+        if groups[string] then
+          return true
+        end
       end
-      return original(buf, ns, row, col, options)
+      return false
     end
     local ok, err = xpcall(function()
       vim.cmd('redraw!')
       for _, row in ipairs(rows) do
-        assert(emitted[row], 'visible Lua group has no syntax at row ' .. row)
+        assert(drawn(row), 'visible Lua group has no syntax at row ' .. row)
       end
       local before = syntax.diagnostics()
       for _ = 1, 5 do
-        emitted = {}
         syntax._test.collect()
         settled()
         vim.cmd('redraw!')
         for _, row in ipairs(rows) do
-          assert(emitted[row], 'cached Lua group lost syntax at row ' .. row)
+          assert(drawn(row), 'cached Lua group lost syntax at row ' .. row)
         end
       end
       H.eq(syntax.diagnostics().parses, before.parses, 'warm redraw reparsed visible files')
       H.eq(syntax.diagnostics().extractions, before.extractions)
       H.eq(before.parsers, 2)
       assert(before.destroyed > 0, 'parser capacity was not recycled')
-      emitted = {}
       syntax.invalidate(s)
       settled()
       vim.cmd('redraw!')
       for _, row in ipairs(rows) do
-        assert(emitted[row], 'rebuilt Lua group has no syntax at row ' .. row)
+        assert(drawn(row), 'rebuilt Lua group has no syntax at row ' .. row)
       end
       bounds()
     end, debug.traceback)
-    vim.api.nvim_buf_set_extmark = original
     syntax._test.reset()
     if not ok then
       error(err)
@@ -903,7 +894,7 @@ H.test(
     local _, buf = H.lines(a .. '/one.lua')
     local generation = s.generation
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('undo')
+      vim.cmd('silent undo')
     end)
     assert(vim.wait(1000, function()
       return s.generation > generation

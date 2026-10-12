@@ -164,7 +164,7 @@ H.test('native undo restores context for the next explicit refresh', 'Q-10,Q-09'
   H.eq(displayed(s), {})
   local generation = s.generation
   vim.api.nvim_buf_call(s.buf, function()
-    vim.cmd('undo')
+    vim.cmd('silent undo')
   end)
   assert(vim.wait(1000, function()
     return s.generation > generation

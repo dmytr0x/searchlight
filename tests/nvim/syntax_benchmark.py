@@ -74,6 +74,7 @@ def main():
     gates = {
         "first_results": added["first_results_median_ms"] < max(5, off["first_results_median_ms"] * .05),
         "warm_navigation": added["navigation_p95_ms"] < 2,
+        "navigation": off["navigation_p95_ms"] < 5,
         "cached_drawing": added["drawing_p95_ms"] < 3,
         "heartbeat": added["worker_gap_p95_ms"] < 10 and on["worker_gap_max_ms"] < 25,
         "rss": max(run["kernel_peak_rss"] for run in runs[True]) -

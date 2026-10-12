@@ -33,9 +33,10 @@ require('searchlight').setup()
 ```
 
 `setup()` registers the commands, mappings, and event handlers. Repeating it preserves
-existing sessions. Neovim capabilities and ripgrep JSON replacement support are
-probed; tested versions are Neovim 0.12.6 and ripgrep 15.2.0. Older ripgrep can search,
-but replacement stays disabled if capture expansion is unavailable.
+existing sessions. Searchlight requires Neovim 0.12 or newer. Neovim capabilities and
+ripgrep JSON replacement support are probed; tested versions are Neovim 0.12.6 and
+ripgrep 15.2.0. Older ripgrep can search, but replacement stays disabled if capture
+expansion is unavailable.
 
 The project layout is:
 
@@ -43,7 +44,6 @@ The project layout is:
 lua/searchlight/  Plugin modules and public init.lua
 tests/nvim/       Isolated test configuration, assertions, and benchmarks
 tests/prototype/  Backend evaluation adapter
-docs/             Design and validation reports
 ```
 
 ## Commands and workflow
@@ -369,6 +369,9 @@ make syntax-benchmark
 make format-check  # optional development tool: StyLua 2.5.2
 ```
 
+CI (`.github/workflows/test.yml`) runs the tests, benchmark, and format check on Neovim
+stable and nightly on Linux and macOS, and the syntax benchmark on Linux.
+
 `make test` isolates Neovim/XDG/log state and runs built-in Lua assertions, real
 filesystem fixtures, real ripgrep, and an injected process driver for deterministic
 asynchronous failures. Tests require ripgrep's expanded JSON replacements. Test files
@@ -400,18 +403,9 @@ one implementation in `results.lua`.
 
 The syntax benchmark compares fresh enabled/disabled processes with syntax-bearing
 fixtures, kernel peak RSS, heartbeat gaps, warm navigation, drawing, and 100 lifecycle
-cycles. See [syntax acceptance measurements](docs/colorful-search-results-validation.md)
-for the measured release gates and global cache high-water counts.
+cycles.
 
-The [backend evaluation](docs/vim-search-prototype-evaluation.md),
-[original syntax report](docs/colorful-search-results-validation.md), and
-[step 1–9 validation](docs/ref-v1-validation.md) are historical evidence. Earlier
-automatic-search-on-typing and dedicated `Preview:` row descriptions are superseded:
-native edits invalidate without searching, Enter/refresh submit immediately, and
+Native edits invalidate without searching, Enter/refresh submit immediately, and
 `set()`/toggle mappings debounce. Results use the compact layout shown above;
 capture expansion remains available in occurrence replacement values and
 `replace.preview()`, without an extra preview row.
-
-See [final simplification validation — 2026-10-10](docs/ref-v1-final-validation-2026-10-10.md)
-for the complete feature review, interactive walkthrough, and fresh comparison with
-the step 1 measurements.

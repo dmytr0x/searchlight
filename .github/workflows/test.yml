@@ -1,0 +1,67 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+env:
+  RG_VERSION: 15.2.0
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        nvim: [stable, nightly]
+        include:
+          - os: ubuntu-latest
+            rg_target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            rg_target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.nvim }}
+      - name: Install ripgrep
+        run: |
+          name="ripgrep-$RG_VERSION-${{ matrix.rg_target }}"
+          curl -sSfL "https://github.com/BurntSushi/ripgrep/releases/download/$RG_VERSION/$name.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+      - run: nvim --version && rg --version
+      - run: make test
+      - run: make benchmark
+
+  syntax-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - name: Install ripgrep and GNU time
+        run: |
+          name="ripgrep-$RG_VERSION-x86_64-unknown-linux-musl"
+          curl -sSfL "https://github.com/BurntSushi/ripgrep/releases/download/$RG_VERSION/$name.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          sudo apt-get install -y time
+      - run: make syntax-benchmark
+        env:
+          SEARCHLIGHT_BENCH_TRIALS: 3
+          SEARCHLIGHT_BENCH_REPORT: ${{ runner.temp }}/syntax-benchmark.json
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 2.5.2
+          args: --check --verify lua tests

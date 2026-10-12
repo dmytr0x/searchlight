@@ -35,7 +35,7 @@ H.test('returning from a native source search preserves panel highlights', 'R-09
     assert(not vim.deep_equal(selected, normal), 'selected match is not highlighted initially')
     assert(not vim.deep_equal(unselected, normal), 'other match is not highlighted initially')
     p.open(s)
-    vim.cmd('normal! /beta\r')
+    vim.cmd('silent normal! /beta\r')
     vim.wait(30)
     H.eq(vim.fn.getreg('/'), 'beta')
     vim.api.nvim_set_current_win(panel_win)

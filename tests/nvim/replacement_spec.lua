@@ -55,7 +55,7 @@ H.test('partial edit exceptions report already-applied ranges accurately', 'R-04
     local _, buf = H.lines(a .. '/one')
     assert(require('searchlight.observe').watched[buf])
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('undo')
+      vim.cmd('silent undo')
     end)
     H.eq(H.lines(a .. '/one'), { 'abc abc' })
   end, debug.traceback)
@@ -373,11 +373,11 @@ H.test(
     H.eq(H.read(a .. '/one'), 'disk abc\n')
     assert(vim.bo[buf].modified)
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('undo')
+      vim.cmd('silent undo')
     end)
     H.eq(H.lines(a .. '/one'), { 'unsaved abc abc' })
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('undo')
+      vim.cmd('silent undo')
     end)
     H.eq(H.lines(a .. '/one'), { 'disk abc' })
   end
@@ -397,7 +397,7 @@ H.test(
     local _, buf = H.lines(a .. '/one')
     p.setup()
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('undo')
+      vim.cmd('silent undo')
     end)
     assert(vim.wait(1000, function()
       return sa.status == 'stale' and sb.status == 'stale'
@@ -407,7 +407,7 @@ H.test(
       return sa.status == 'complete' and #sa.results == 1
     end, 5))
     vim.api.nvim_buf_call(buf, function()
-      vim.cmd('redo')
+      vim.cmd('silent redo')
     end)
     assert(vim.wait(1000, function()
       return sa.status == 'stale'
@@ -538,7 +538,7 @@ for _, fixture in ipairs({
       end
       H.eq(H.read(a .. '/one'), fixture.raw)
       vim.api.nvim_buf_call(buf, function()
-        vim.cmd('write')
+        vim.cmd('silent write')
       end)
       H.eq(H.read(a .. '/one'), fixture.expected)
     end

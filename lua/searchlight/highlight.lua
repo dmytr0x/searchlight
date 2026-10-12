@@ -411,15 +411,8 @@ local function parse_entry(e)
     end
     schedule_worker()
   end
-  -- Public callback parsing yields cooperatively on supported Neovim versions (0.11+).
-  -- Older supported versions parse synchronously; the source cap remains essential.
-  local parsed, err = pcall(function()
-    if vim.fn.has('nvim-0.11') == 1 then
-      e.parser:parse(false, finish)
-    else
-      finish(nil, e.parser:parse(false))
-    end
-  end)
+  -- Callback parsing yields cooperatively.
+  local parsed, err = pcall(e.parser.parse, e.parser, false, finish)
   if not parsed then
     finish(err)
   end

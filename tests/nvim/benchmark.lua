@@ -57,9 +57,19 @@ local ok, err = xpcall(function()
   H.wait(quiet, 'complete')
   local quiet_ms = (vim.uv.hrtime() - quiet_started) / 1e6
   process.start = start
-  print(vim.json.encode({ files = 2000, scope_matches = 0, rg_processes = processes, total_ms = quiet_ms }))
+  local rg_started = vim.uv.hrtime()
+  vim.system({ 'rg', '--json', 'xyzzyq', b }):wait()
+  local rg_ms = (vim.uv.hrtime() - rg_started) / 1e6
+  print(vim.json.encode({
+    files = 2000,
+    scope_matches = 0,
+    rg_processes = processes,
+    total_ms = quiet_ms,
+    single_rg_ms = rg_ms,
+  }))
   assert(processes < 50, 'no-hit search spawned ' .. processes .. ' rg processes')
   assert(quiet_ms < 1000, 'no-hit search took ' .. quiet_ms .. ' ms')
+  assert(quiet_ms < 5 * rg_ms, 'no-hit search took ' .. quiet_ms .. ' ms; one rg took ' .. rg_ms)
 end, debug.traceback)
 timer:stop()
 timer:close()
