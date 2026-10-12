@@ -176,8 +176,19 @@ function M.inventory(s)
   return args
 end
 
+local function query_flags(s, args)
+  table.insert(args, s.options.case and '--case-sensitive' or '--ignore-case')
+  if s.options.word then
+    table.insert(args, '--word-regexp')
+  end
+  if not s.options.regex then
+    table.insert(args, '--fixed-strings')
+  end
+  return args
+end
+
 function M.match(s)
-  local args = {
+  local args = query_flags(s, {
     'rg',
     '--no-config',
     '--json',
@@ -185,19 +196,48 @@ function M.match(s)
     '--max-columns=0',
     '--encoding=utf-8',
     '--context=' .. string.format('%.0f', s.options.context),
-    s.options.case and '--case-sensitive' or '--ignore-case',
-  }
-  if s.options.word then
-    table.insert(args, '--word-regexp')
-  end
-  if not s.options.regex then
-    table.insert(args, '--fixed-strings')
-  end
+  })
   if M.probe().replacement then
     table.insert(args, '--replace=' .. s.fields.replacement)
   end
   vim.list_extend(args, { '--', s.fields.query, '-' })
   return args
+end
+
+-- macOS ARG_MAX is 1 MiB; stay well below it, environment included.
+local batch_bytes = 256 * 1024
+
+local function batches(base, paths)
+  local result, args, size = {}, nil, 0
+  for _, path in ipairs(paths) do
+    if not args or size + #path + 1 > batch_bytes then
+      args = vim.list_extend({}, base)
+      size = 0
+      for _, arg in ipairs(base) do
+        size = size + #arg + 1
+      end
+      table.insert(result, args)
+    end
+    table.insert(args, path)
+    size = size + #path + 1
+  end
+  return result
+end
+
+-- Files on disk whose query hits are a superset of hits in their decoded snapshots,
+-- except for files listed by decode_sensitive.
+function M.prefilter(s, paths)
+  local base = query_flags(s, {
+    'rg', '--no-config', '--files-with-matches', '--null', '--color=never', '--encoding=utf-8',
+  })
+  return batches(vim.list_extend(base, { '--regexp=' .. s.fields.query, '--' }), paths)
+end
+
+-- Files whose decoded snapshot can differ from what ripgrep matches on disk:
+-- CR bytes (CRLF or mixed endings) and invalid UTF-8 (decoded as Latin-1).
+function M.decode_sensitive(paths)
+  return batches({ 'rg', '--no-config', '--files-with-matches', '--null', '--color=never',
+    '--encoding=utf-8', '--regexp=\\r', '--regexp=\\x{FFFD}', '--' }, paths)
 end
 
 -- Streaming JSON decoder, bounded even if the child never sends a newline.

@@ -51,7 +51,7 @@ function M.invalidate(s, reason, launch)
   end
   transition(s, s.fields.query == '' and 'empty' or (launch == false and 'stale' or 'waiting'), reason)
   if s.fields.query == '' then
-    s.results, s.selected, s.snapshots = {}, nil, {}
+    s.results, s.selected, s.snapshots, s.identities = {}, nil, {}, {}
   end
   render(s)
   if launch ~= false and s.fields.query ~= '' then
@@ -100,7 +100,8 @@ end
 
 -- Stream callbacks may arrive on a libuv thread. Reserve queued bytes before
 -- scheduling delivery, and mutate domain models only on the main loop.
-local function start_job(group, argv, opts, chunk, done, cleanup)
+-- A tolerant job reports a start error to `done` with a nil result instead of failing the run.
+local function start_job(group, argv, opts, chunk, done, cleanup, tolerant)
   local s, gen = group.session, group.generation
   local record = { queued = 0, stderr = '', cancelled = false, finishing = false }
   group.jobs[record], group.pending[record] = record, record
@@ -114,7 +115,7 @@ local function start_job(group, argv, opts, chunk, done, cleanup)
       cleanup()
     end
     if current(s, gen) and not record.cancelled then
-      if start_error then
+      if start_error and not tolerant then
         fail(s, gen, tostring(start_error))
       else
         done(out, record.stderr)
@@ -265,7 +266,7 @@ local function select_sources(run)
     end
   end
   for path in pairs(run.inventory.eligible) do
-    if not run.request.options.open or by_path[path] then
+    if (not run.request.options.open or by_path[path]) and (not run.candidates or run.candidates[path]) then
       table.insert(queue, { path = path, buf = by_path[path] })
     end
   end
@@ -450,8 +451,11 @@ pump_sources = function(run)
       run.next_source = run.next_source - 1
       return
     end
+    -- A mixed-ending file without a disk hit cannot hide a match.
+    local unmatched = err == 'mixed or unsupported source line endings'
+      and run.hits and not run.hits[candidate.path]
     if not snap then
-      if err ~= 'binary source (NUL bytes)' then
+      if err ~= 'binary source (NUL bytes)' and not unmatched then
         s.incomplete = true
         s.message = (s.message or '') .. ' Skipped ' .. candidate.path .. ': ' .. tostring(err)
       end
@@ -470,11 +474,8 @@ pump_sources = function(run)
   end
 end
 
-local function begin_matching(run)
+local function match_sources(run)
   local s, gen = run.session, run.generation
-  if not current(s, gen) then
-    return
-  end
   select_sources(run)
   if #run.queue == 0 then
     -- Compile even with no eligible sources; empty scopes must report invalid regex.
@@ -488,6 +489,88 @@ local function begin_matching(run)
       end)
   else
     pump_sources(run)
+  end
+end
+
+-- Disk hits miss only snapshots that differ from disk bytes: decode-sensitive files and
+-- buffer-sourced text. Those are always candidates. Any prefilter failure keeps every source.
+local function prefilter_sources(run)
+  local request = run.request
+  if request.options.open then
+    match_sources(run)
+    return
+  end
+  local buffers = {}
+  for _, b in ipairs(run.buffers) do
+    buffers[b.path] = b.buf
+  end
+  local candidates, relative, paths = {}, {}, {}
+  for path in pairs(run.inventory.eligible) do
+    local buf = buffers[path]
+    if buf and (vim.bo[buf].modified or not vim.uv.fs_stat(path)) then
+      candidates[path] = true
+    else
+      local rel = scope.relative(request.root, path)
+      relative[rel] = path
+      table.insert(paths, rel)
+    end
+  end
+  if #paths == 0 then
+    run.candidates, run.hits = candidates, {}
+    match_sources(run)
+    return
+  end
+  table.sort(paths)
+  local hits, failed, jobs = {}, false, {}
+  for _, argv in ipairs(rg.prefilter(request, paths)) do
+    table.insert(jobs, { argv = argv, hit = true })
+  end
+  for _, argv in ipairs(rg.decode_sensitive(paths)) do
+    table.insert(jobs, { argv = argv })
+  end
+  local remaining = #jobs
+  local function settle()
+    remaining = remaining - 1
+    if remaining > 0 then
+      return
+    end
+    if not failed then
+      run.candidates, run.hits = candidates, hits
+    end
+    match_sources(run)
+  end
+  for _, job in ipairs(jobs) do
+    local carry = ''
+    start_job(run.group, job.argv, { cwd = request.root }, function(data)
+      carry = carry .. data
+      while true do
+        local pos = carry:find('\0', 1, true)
+        if not pos then
+          break
+        end
+        local path = relative[carry:sub(1, pos - 1)]
+        carry = carry:sub(pos + 1)
+        if not path then
+          failed = true
+        else
+          candidates[path] = true
+          if job.hit then
+            hits[path] = true
+          end
+        end
+      end
+    end, function(out)
+      if not out or out.code ~= 0 and out.code ~= 1 or carry ~= '' then
+        failed = true
+      end
+      settle()
+    end, nil, true)
+  end
+end
+
+local function begin_matching(run)
+  if current(run.session, run.generation) then
+    prefilter_sources(run)
   end
 end
 
@@ -550,7 +633,8 @@ function M.launch(s, gen)
   if not run then
     return
   end
-  s.results, s.snapshots = {}, {}
+  -- Inventory identities let alias writes from other roots invalidate unscanned sources.
+  s.results, s.snapshots, s.identities = {}, {}, run.inventory.identities
   transition(s, 'searching', rg.probe().reason)
   account_snapshots(run, 0)
   s.incomplete = false
@@ -581,6 +665,9 @@ function M.source_changed(path, launch, generations)
   end
   for _, s in pairs(sessions.by_id) do
     local affected = scope.contains(s.root, path)
+    for identity in pairs(identities) do
+      affected = affected or s.identities[identity] == true
+    end
     if not affected then
       for _, snap in pairs(s.snapshots) do
         if snap.disk.exists and identities['file:' .. snap.disk.dev .. ':' .. snap.disk.ino] then

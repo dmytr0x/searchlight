@@ -133,6 +133,7 @@ function M.create(root, config)
     result_rows = {},
     collapsed_paths = {},
     snapshots = {},
+    identities = {},
     report = nil,
   }
   M.by_id[s.id], M.by_buf[buf], M.last = s, s, s.id

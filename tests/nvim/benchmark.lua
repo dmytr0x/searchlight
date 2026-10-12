@@ -37,6 +37,29 @@ local ok, err = xpcall(function()
     heartbeat_count = beats,
     longest_heartbeat_gap_ms = largest_gap,
   }))
+  timer:stop()
+  H.cleanup()
+  -- Prefilter gate: a scope with no hits must not spawn a process per file.
+  local b = H.fixture()
+  for i = 1, 2000 do
+    H.write(b .. string.format('/d%02d/file%04d.txt', i % 40, i), string.rep('abc abc abc abc\n', 25))
+  end
+  local process = require('searchlight.process')
+  local start, processes = process.start, 0
+  process.start = function(...)
+    processes = processes + 1
+    return start(...)
+  end
+  local quiet_started = vim.uv.hrtime()
+  local quiet = p.new(b)
+  p.set(quiet, { query = 'xyzzyq' })
+  p.refresh(quiet)
+  H.wait(quiet, 'complete')
+  local quiet_ms = (vim.uv.hrtime() - quiet_started) / 1e6
+  process.start = start
+  print(vim.json.encode({ files = 2000, scope_matches = 0, rg_processes = processes, total_ms = quiet_ms }))
+  assert(processes < 50, 'no-hit search spawned ' .. processes .. ' rg processes')
+  assert(quiet_ms < 1000, 'no-hit search took ' .. quiet_ms .. ' ms')
 end, debug.traceback)
 timer:stop()
 timer:close()

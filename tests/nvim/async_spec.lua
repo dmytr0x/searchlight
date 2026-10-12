@@ -11,6 +11,15 @@ local function fake(run)
       end)
       return { kill = function() end }
     end
+    if vim.tbl_contains(argv, '--files-with-matches') then
+      -- Report every path as a candidate, so tests drive only inventory and matching.
+      local paths = vim.list_slice(argv, vim.fn.index(argv, '--') + 2)
+      vim.schedule(function()
+        opts.stdout(nil, table.concat(paths, '\0') .. '\0')
+        done({ code = 0 })
+      end)
+      return { kill = function() end }
+    end
     local call = { argv = argv, opts = opts, done = done, killed = false }
     table.insert(calls, call)
     return {
@@ -71,7 +80,8 @@ for _, phase in ipairs({ 'inventory', 'shadow', 'matching' }) do
     local calls = 0
     driver.start = function(_, opts, done)
       calls = calls + 1
-      local fail_at = ({ inventory = 1, shadow = 2, matching = 3 })[phase]
+      -- Calls 3 and 4 are the tolerant prefilter passes.
+      local fail_at = ({ inventory = 1, shadow = 2, matching = 5 })[phase]
       if calls == fail_at then
         error('injected start failure')
       end
