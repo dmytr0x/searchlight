@@ -74,15 +74,12 @@ function M.order(s)
   end
 end
 
-local function code_rows(matches, first_match, last_match, emit, checkpoint)
+local function code_rows(matches, first_match, last_match, emit)
   local snapshot, previous_line = matches[first_match].snapshot, nil
   local final = 0
   for i = first_match, last_match do
     local result = matches[i]
     final = math.max(final, math.min(#snapshot.lines, result.line + result.context_size))
-    if checkpoint then
-      checkpoint()
-    end
   end
   local width = #tostring(final)
   local index, match_index = first_match, first_match
@@ -94,14 +91,8 @@ local function code_rows(matches, first_match, last_match, emit, checkpoint)
       last =
         math.min(#snapshot.lines, math.max(last, matches[index].line + matches[index].context_size))
       index = index + 1
-      if checkpoint then
-        checkpoint()
-      end
     end
     for line = first, last do
-      if checkpoint then
-        checkpoint()
-      end
       local line_matches
       while match_index <= last_match and matches[match_index].line == line do
         line_matches = line_matches or {}
@@ -120,37 +111,6 @@ local function code_rows(matches, first_match, last_match, emit, checkpoint)
         end
         previous_line = line
       end
-    end
-  end
-end
-
--- Requested mappings only; headers, omitted lines, fields and help have no mapping.
--- Columns and lengths are bytes; Unicode markers preserve the gutter's display width.
-function M.mappings(s, first, last, emit, checkpoint)
-  -- Compact file ranges refer to the canonical occurrence array. Rendering and
-  -- mapping walk the same blocks; no per-row geometry or text is retained.
-  local layout = s.result_layout or {}
-  for _, file in ipairs(layout) do
-    if checkpoint then
-      checkpoint()
-    end
-    if file.row >= last then
-      break
-    end
-    if file.end_row > first and not s.collapsed_paths[file.path] then
-      local row = file.row
-      code_rows(s.results, file.first, file.last, function(line, text, line_matches, width, snapshot)
-        if row >= last then
-          return false
-        end
-        if line and row >= first then
-          local state = line_state(s, line_matches)
-          if emit(row, snapshot, line, 5 + #state + width, #text) == false then
-            return false
-          end
-        end
-        row = row + 1
-      end, checkpoint)
     end
   end
 end
@@ -219,7 +179,7 @@ function M.render(s, add)
     stamp = (stamp * 31 + value) % 2147483647
   end
   local rows, occurrences, positions, headers, file_rows, markers = {}, {}, {}, {}, {}, {}
-  local gutters, header_spans = {}, {}
+  local gutters, header_spans, row_lines, row_snapshots = {}, {}, {}, {}
   local layout = geometry(s)
   for file_index, file in ipairs(layout) do
     local path = file.path
@@ -238,7 +198,8 @@ function M.render(s, add)
     -- Zero-based first code row (the existing file_headers index is one-based).
     file.row = header + 1
     if not collapsed then
-      mix(tonumber(s.results[file.first].snapshot.hash:sub(1, 8), 16))
+      local snapshot = s.results[file.first].snapshot
+      mix(tonumber(snapshot.hash:sub(1, 8), 16))
       code_rows(s.results, file.first, file.last, function(line, text, line_matches, width)
         if not line then
           add('      ⋯')
@@ -255,7 +216,7 @@ function M.render(s, add)
         mix(#prefix)
         mix(#text)
         mapped = mapped + 1
-        gutters[row + 1] = #prefix
+        gutters[row + 1], row_lines[row + 1], row_snapshots[row + 1] = #prefix, line, snapshot
         if state == '○   ' then
           markers[row + 1] = 2
         end
@@ -287,6 +248,8 @@ function M.render(s, add)
   s.result_rows, s.result_occurrences, s.result_positions = rows, occurrences, positions
   s.file_headers, s.file_rows = headers, file_rows
   s.result_markers, s.result_gutters, s.file_header_spans = markers, gutters, header_spans
+  -- Code-row source map: gutters hold the byte column where source text starts.
+  s.row_lines, s.row_snapshots = row_lines, row_snapshots
   local key = stamp .. ':' .. mapped
   if s.layout_key ~= key or s.layout_invalid then
     s.layout_revision = (s.layout_revision or 0) + 1

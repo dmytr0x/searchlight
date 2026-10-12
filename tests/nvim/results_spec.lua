@@ -48,15 +48,11 @@ H.test('green circle markers follow the cursor without shifting source columns',
   view.render(s)
   H.eq(s.result_positions, positions)
   local mapped = {}
-  require('searchlight.results').mappings(
-    s,
-    0,
-    vim.api.nvim_buf_line_count(s.buf),
-    function(row, _, source_line, col)
-      local line = vim.api.nvim_buf_get_lines(s.buf, row, row + 1, false)[1]
-      mapped[source_line] = { col = col, display_col = vim.fn.strdisplaywidth(line:sub(1, col)) }
-    end
-  )
+  for _, code in ipairs(H.code_rows(s)) do
+    local line = vim.api.nvim_buf_get_lines(s.buf, code.row, code.row + 1, false)[1]
+    mapped[code.line] =
+      { col = code.col, display_col = vim.fn.strdisplaywidth(line:sub(1, code.col)) }
+  end
   H.eq(mapped[1].display_col, mapped[2].display_col)
   H.eq(mapped[2].col, positions[s.results[1].id].col - #'雪 ')
   p.navigate(s, -1)

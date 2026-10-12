@@ -115,6 +115,24 @@ function H.resolved_group(name)
   local parent = next(hl) == nil and name:match('^(.+)%.[^.]+$')
   return parent and H.resolved_group(parent) or name
 end
+-- Code rows from the render-time source map, in panel order.
+function H.code_rows(s)
+  local rows = {}
+  for index, line in pairs(s.row_lines or {}) do
+    local snapshot = s.row_snapshots[index]
+    rows[#rows + 1] = {
+      row = index - 1,
+      snapshot = snapshot,
+      line = line,
+      col = s.result_gutters[index],
+      length = #snapshot.lines[line],
+    }
+  end
+  table.sort(rows, function(a, b)
+    return a.row < b.row
+  end)
+  return rows
+end
 function H.cleanup()
   local registry = require('searchlight.sessions')
   local existing = {}

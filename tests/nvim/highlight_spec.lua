@@ -69,17 +69,11 @@ H.test('syntax mappings share exact rendering blocks and byte gutters', 'Syntax,
   local s = H.search(a, { query = 'abc', context = 1 })
   view.render(s)
   local mapping, lines = {}, vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
-  require('searchlight.results').mappings(
-    s,
-    0,
-    #lines,
-    function(row, snapshot, line, col, length)
-      mapping[#mapping + 1] = line
-      H.eq(lines[row + 1]:sub(col + 1), snapshot.lines[line])
-      H.eq(length, #snapshot.lines[line])
-      assert(not s.file_rows[row + 1])
-    end
-  )
+  for _, code in ipairs(H.code_rows(s)) do
+    mapping[#mapping + 1] = code.line
+    H.eq(lines[code.row + 1]:sub(code.col + 1), code.snapshot.lines[code.line])
+    assert(not s.file_rows[code.row + 1])
+  end
   H.eq(mapping, { 1, 2, 3, 6, 7, 8 })
   local revision = s.layout_revision
   p.navigate(s, 1)
@@ -88,11 +82,7 @@ H.test('syntax mappings share exact rendering blocks and byte gutters', 'Syntax,
   assert(s.layout_revision > revision)
   s.collapsed_paths[a .. '/one.lua'] = true
   view.render(s)
-  mapping = {}
-  require('searchlight.results').mappings(s, 0, #lines, function(row)
-    mapping[#mapping + 1] = row
-  end)
-  H.eq(mapping, {})
+  H.eq(H.code_rows(s), {})
 end)
 
 H.test(
@@ -106,14 +96,9 @@ H.test(
     view.render(s)
     show_results(s)
     local maps = {}
-    require('searchlight.results').mappings(
-      s,
-      0,
-      vim.api.nvim_buf_line_count(s.buf),
-      function(row, _, _, col, length)
-        maps[row] = { col, length }
-      end
-    )
+    for _, code in ipairs(H.code_rows(s)) do
+      maps[code.row] = { code.col, code.length }
+    end
     settled()
     vim.cmd('redraw!')
     local string, comment = H.resolved_group('@string.lua'), H.resolved_group('@comment.lua')
@@ -318,7 +303,7 @@ H.test(
     H.eq(#s.results, 3)
     -- The oversized group and long source line have no syntax mapping.
     for _, demand in pairs(syntax._test.demands()) do
-      for i = 1, #demand.maps, 6 do
+      for i = 1, #demand.maps, 7 do
         assert(not demand.maps[i + 4]:match('/one.lua$'))
         assert(demand.maps[i + 4] ~= a .. '/two.lua' or demand.maps[i + 1] ~= 1)
       end
@@ -472,14 +457,9 @@ H.test(
     show_results(s)
     settled()
     local rows = {}
-    require('searchlight.results').mappings(
-      s,
-      0,
-      vim.api.nvim_buf_line_count(s.buf),
-      function(row)
-        rows[#rows + 1] = row
-      end
-    )
+    for _, code in ipairs(H.code_rows(s)) do
+      rows[#rows + 1] = code.row
+    end
     H.eq(#rows, 3)
     local string = H.resolved_group('@string.lua')
     local function drawn(row)
@@ -879,7 +859,8 @@ H.test(
     view.render(s)
     settled()
     assert(destroyed >= 1)
-    H.eq(syntax._test.entries()[first], nil)
+    local retained = syntax._test.entries()[first]
+    assert(not retained or not retained.text, 'off-screen entry kept its source')
     assert(syntax._test.entries()[s.snapshots[a .. '/two.lua'].hash .. ':lua'])
     bounds()
     syntax._test.reset()
@@ -1021,53 +1002,91 @@ H.test(
 )
 
 H.test(
-  'hiding a panel disposes a yielded mapper and its in-flight allocations',
-  'Syntax,Cancellation,Budgets',
+  'scrolling back reuses retained spans without extracting or parsing',
+  'Syntax,Viewport,LRU',
+  function()
+    syntax._test.reset()
+    local a = H.fixture()
+    for i = 1, 60 do
+      H.write(
+        string.format('%s/file%02d.lua', a, i),
+        string.rep('local abc = "text' .. i .. '"\n', 5)
+      )
+    end
+    local s = H.search(a, { query = 'abc', context = 0 })
+    view.render(s)
+    show_results(s)
+    settled()
+    local page = vim.keycode('<C-f>')
+    for _ = 1, 6 do
+      vim.cmd('normal! ' .. page)
+      settled()
+    end
+    local before = syntax.diagnostics()
+    assert(before.parses > 2, 'scrolling did not reach uncached files')
+    local back = vim.keycode('<C-b>')
+    for _ = 1, 6 do
+      vim.cmd('normal! ' .. back)
+      settled()
+    end
+    H.eq(syntax.diagnostics().parses, before.parses)
+    H.eq(syntax.diagnostics().extractions, before.extractions)
+    bounds()
+    syntax._test.reset()
+  end
+)
+
+H.test(
+  'mapping the last viewport of a large panel reads only nearby rows',
+  'Syntax,Viewport,Budgets',
   function()
     syntax._test.reset(fake())
     local a = H.fixture()
-    H.write(a .. '/one.lua', string.rep('local abc = 42\n', 100))
-    local s = H.search(a)
+    H.write(a .. '/one.lua', string.rep('abc\n', 10000))
+    local s = H.search(a, { query = 'abc', context = 0 })
+    H.eq(#s.results, 10000)
     view.render(s)
-    show_results(s)
-    local results = require('searchlight.results')
+    vim.cmd('normal! G')
     syntax._test.reset(fake())
-    local original = results.mappings
-    local interrupted, resumed, closed = false, false, false
-    results.mappings = function(session, first, last, emit, checkpoint)
-      return original(session, first, last, emit, function()
-        if not interrupted then
-          interrupted = true
-          bounds()
-          vim.schedule(function()
-            p.close(s)
-            closed = true
-          end)
-          coroutine.yield()
-          resumed = true
-        end
-        checkpoint()
-      end)
-    end
+    local lines, reads = s.row_lines, 0
+    s.row_lines = setmetatable({}, {
+      __index = function(_, index)
+        reads = reads + 1
+        return lines[index]
+      end,
+    })
     local ok, err = xpcall(function()
       syntax._test.collect()
-      assert(vim.wait(1000, function()
-        return closed
-      end, 5))
-      settled()
-      assert(interrupted and not resumed, 'obsolete mapper resumed after its panel was hidden')
-      local d = syntax.diagnostics()
-      H.eq(d.demands, 0)
-      H.eq(d.rows, 0)
-      H.eq(d.blocks, 0)
-      H.eq(H.read(a .. '/one.lua'), string.rep('local abc = 42\n', 100))
-      bounds()
+      assert(syntax.diagnostics().rows > 0, 'last viewport was not mapped')
+      assert(reads <= 3 * vim.api.nvim_win_get_height(0), 'mapper read ' .. reads .. ' rows')
     end, debug.traceback)
-    results.mappings = original
+    s.row_lines = lines
     syntax._test.reset()
     if not ok then
       error(err)
     end
+  end
+)
+
+H.test(
+  'buffer filetype lookup matches paths exactly, not as patterns',
+  'Syntax,Snapshot',
+  function()
+    syntax._test.reset()
+    local a = H.fixture()
+    H.write(a .. '/[id]/x.lua', 'local abc = 1\n')
+    H.write(a .. '/d/x.lua', 'local abc = 2\n')
+    local s = H.search(a)
+    H.eq(#s.results, 2)
+    local buf = vim.fn.bufadd(a .. '/d/x.lua')
+    vim.bo[buf].filetype = 'vim'
+    view.render(s)
+    show_results(s)
+    settled()
+    local entries = syntax._test.entries()
+    assert(entries[s.snapshots[a .. '/[id]/x.lua'].hash .. ':lua'], vim.inspect(entries))
+    vim.api.nvim_buf_delete(buf, { force = true })
+    syntax._test.reset()
   end
 )
 
