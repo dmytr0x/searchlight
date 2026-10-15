@@ -1,6 +1,15 @@
 local H = require('tests.helpers')
 local p = require('searchlight')
 local sessions = require('searchlight.sessions')
+local function current_tab_test(name, requirements, run)
+  H.test(name, requirements, function()
+    local config = vim.deepcopy(p.config)
+    p.setup({ open_in_new_tab = false })
+    local ok, err = xpcall(run, debug.traceback)
+    p.setup(config)
+    assert(ok, err)
+  end)
+end
 H.test(
   'public commands accept a root containing spaces and close their owning session',
   'S-01,S-03,Q-08',
@@ -29,7 +38,7 @@ H.test(
     assert(sessions.owns(sb))
   end
 )
-H.test(
+current_tab_test(
   'search reuses the empty startup window instead of leaving a blank split',
   'S-01,S-05',
   function()
@@ -47,54 +56,66 @@ H.test(
     H.eq(vim.api.nvim_win_get_buf(editor), s.buf)
   end
 )
-H.test('opening search preserves named, modified, and special empty buffers', 'S-01', function()
-  local a = H.fixture()
-  for _, kind in ipairs({ 'named', 'modified', 'special' }) do
-    local buf = vim.api.nvim_create_buf(true, false)
-    if kind == 'named' then
-      vim.api.nvim_buf_set_name(buf, a .. '/empty')
-    elseif kind == 'modified' then
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved text' })
-    else
-      vim.bo[buf].buftype = 'nofile'
+current_tab_test(
+  'opening search preserves named, modified, and special empty buffers',
+  'S-01',
+  function()
+    local a = H.fixture()
+    for _, kind in ipairs({ 'named', 'modified', 'special' }) do
+      local buf = vim.api.nvim_create_buf(true, false)
+      if kind == 'named' then
+        vim.api.nvim_buf_set_name(buf, a .. '/empty')
+      elseif kind == 'modified' then
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved text' })
+      else
+        vim.bo[buf].buftype = 'nofile'
+      end
+      vim.api.nvim_win_set_buf(0, buf)
+      local editor = vim.api.nvim_get_current_win()
+      local s = p.search(a)
+      H.eq(#vim.api.nvim_tabpage_list_wins(0), 2)
+      H.eq(vim.api.nvim_win_get_buf(editor), buf)
+      p.action(s, 'hide')
+      p.close(s)
     end
+  end
+)
+current_tab_test(
+  'opening search preserves an existing layout of empty editor splits',
+  'S-01',
+  function()
+    local a = H.fixture()
+    local buf = vim.api.nvim_create_buf(true, false)
     vim.api.nvim_win_set_buf(0, buf)
+    vim.cmd('vsplit')
+    local editors = vim.api.nvim_tabpage_list_wins(0)
+    p.search(a)
+    H.eq(#vim.api.nvim_tabpage_list_wins(0), 3)
+    for _, win in ipairs(editors) do
+      H.eq(vim.api.nvim_win_get_buf(win), buf)
+    end
+  end
+)
+current_tab_test(
+  'every New Search creates a uniquely named listed nofile top split',
+  'S-01,S-02',
+  function()
+    local a = H.fixture()
     local editor = vim.api.nvim_get_current_win()
-    local s = p.search(a)
-    H.eq(#vim.api.nvim_tabpage_list_wins(0), 2)
-    H.eq(vim.api.nvim_win_get_buf(editor), buf)
-    p.action(s, 'hide')
-    p.close(s)
+    local sa, sb = p.search(a), p.search(a)
+    assert(sa.id ~= sb.id and sa.buf ~= sb.buf)
+    H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id)
+    H.eq(vim.bo[sa.buf].bufhidden, 'hide')
+    H.eq(vim.bo[sa.buf].buftype, 'nofile')
+    H.eq(vim.bo[sa.buf].buflisted, true)
+    assert(#vim.fn.win_findbuf(sa.buf) > 0 and #vim.fn.win_findbuf(sb.buf) > 0)
+    local first, second = vim.fn.win_findbuf(sa.buf)[1], vim.fn.win_findbuf(sb.buf)[1]
+    H.eq(vim.api.nvim_win_get_position(second), { 0, 0 })
+    H.eq(vim.api.nvim_win_get_width(second), vim.o.columns)
+    assert(vim.api.nvim_win_get_position(first)[1] > 0)
+    assert(vim.api.nvim_win_get_position(editor)[1] > vim.api.nvim_win_get_position(first)[1])
   end
-end)
-H.test('opening search preserves an existing layout of empty editor splits', 'S-01', function()
-  local a = H.fixture()
-  local buf = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_win_set_buf(0, buf)
-  vim.cmd('vsplit')
-  local editors = vim.api.nvim_tabpage_list_wins(0)
-  p.search(a)
-  H.eq(#vim.api.nvim_tabpage_list_wins(0), 3)
-  for _, win in ipairs(editors) do
-    H.eq(vim.api.nvim_win_get_buf(win), buf)
-  end
-end)
-H.test('every New Search creates a uniquely named listed nofile top split', 'S-01,S-02', function()
-  local a = H.fixture()
-  local editor = vim.api.nvim_get_current_win()
-  local sa, sb = p.search(a), p.search(a)
-  assert(sa.id ~= sb.id and sa.buf ~= sb.buf)
-  H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id)
-  H.eq(vim.bo[sa.buf].bufhidden, 'hide')
-  H.eq(vim.bo[sa.buf].buftype, 'nofile')
-  H.eq(vim.bo[sa.buf].buflisted, true)
-  assert(#vim.fn.win_findbuf(sa.buf) > 0 and #vim.fn.win_findbuf(sb.buf) > 0)
-  local first, second = vim.fn.win_findbuf(sa.buf)[1], vim.fn.win_findbuf(sb.buf)[1]
-  H.eq(vim.api.nvim_win_get_position(second), { 0, 0 })
-  H.eq(vim.api.nvim_win_get_width(second), vim.o.columns)
-  assert(vim.api.nvim_win_get_position(first)[1] > 0)
-  assert(vim.api.nvim_win_get_position(editor)[1] > vim.api.nvim_win_get_position(first)[1])
-end)
+)
 H.test('listed panel names include the search term and stay unique', 'S-01,S-02', function()
   local a = H.fixture()
   H.write(a .. '/one', 'abc xyz\n')
@@ -135,7 +156,7 @@ H.test(
     assert(sessions.owns(sa))
     H.eq(p.recent(sa.id), sa)
     H.eq(vim.api.nvim_get_current_buf(), sa.buf)
-    H.eq(vim.api.nvim_win_get_position(0), { 0, 0 })
+    H.eq(vim.api.nvim_win_get_position(0), { 1, 0 })
     H.eq(vim.api.nvim_win_get_width(0), vim.o.columns)
     vim.cmd('bdelete ' .. sa.buf)
     H.eq(sessions.get(sa.id), nil)
@@ -246,7 +267,7 @@ H.test('each source jump opens a fresh horizontal split below search', 'S-05', f
   H.eq(vim.api.nvim_win_get_buf(first), buf)
   H.eq(vim.api.nvim_win_get_buf(second), buf)
   H.eq(vim.api.nvim_win_get_buf(editor), original_buf)
-  H.eq(vim.api.nvim_win_get_position(panel), { 0, 0 })
+  H.eq(vim.api.nvim_win_get_position(panel), { 1, 0 })
   for _, win in ipairs({ first, second, third }) do
     H.eq(vim.api.nvim_win_get_width(win), vim.o.columns)
     assert(vim.api.nvim_win_get_position(win)[1] > 0)
@@ -267,7 +288,7 @@ H.test(
     p.action(s, 'hide')
     local _, source = p.open(s)
     local panel = vim.fn.win_findbuf(s.buf)[1]
-    H.eq(vim.api.nvim_win_get_position(panel), { 0, 0 })
+    H.eq(vim.api.nvim_win_get_position(panel), { 1, 0 })
     assert(vim.api.nvim_win_get_position(source)[1] > 0)
     local tab = vim.api.nvim_get_current_tabpage()
     vim.cmd('tabnew')

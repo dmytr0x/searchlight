@@ -9,6 +9,7 @@ local controller = require('searchlight.controller')
 local M = {
   config = vim.tbl_extend('force', input.defaults, {
     mappings = { search = '<leader>sp', replace = '<leader>sr', recent = '<leader>sP' },
+    open_in_new_tab = true,
     close_on_open = false,
     syntax_highlighting = true,
     syntax_injections = false,
@@ -41,7 +42,7 @@ local function create_session(root, mode, options)
   local s = sessions.create(root, M.config, mode, initial)
   view.attach(s)
   view.render(s)
-  sessions.activate(s)
+  sessions.activate(s, s.config.open_in_new_tab)
   view.focus_field(s, 'query')
   controller.execute(s, policy)
   return s
@@ -67,7 +68,7 @@ function M.reopen()
     s = sessions.create(initial.root, initial.config, initial.mode, initial)
     view.attach(s)
     view.render(s)
-    sessions.activate(s)
+    sessions.activate(s, s.config.open_in_new_tab)
     view.focus_field(s, 'query')
     controller.execute(s, 'immediate')
   else

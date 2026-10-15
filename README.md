@@ -192,8 +192,10 @@ cursor's match line, including stale or excluded results. A `⋯` row separates 
 context blocks. Context rows do not count as matches or replacement targets.
 File collapse state survives refreshes, and navigation expands the selected file.
 
-Panels open at the top of the tab. An untouched empty startup window is reused;
-existing editor windows and split layouts are preserved. Every source jump creates
+New Search and Search & Replace panels open in a new tab by default. Set
+`open_in_new_tab = false` in `setup()` to open them at the top of the current tab
+instead; in that mode, an untouched empty startup window is reused. Existing
+editor windows and split layouts are preserved. Every source jump creates
 a new horizontal split below the panels, opens the exact occurrence, unfolds it,
 and centers it with `zz`. Source windows inherit the editor's pre-panel options and
 normal filetype/autocommand behavior.
@@ -208,9 +210,9 @@ buffer pickers and `:ls`. `:SearchlightFocus` restores a panel at the top; selec
 its buffer also restores it. `:bdelete`, `:bwipeout`, or `:SearchlightClose` dispose
 the session. `:SearchlightReopen` can recreate the most recently used panel after
 disposal, retaining its root, mode, query, replacement, filters, search options,
-section visibility, and captured configuration, including `close_on_open`, syntax
-settings, and resource limits. Changing directories or calling `setup()` does not
-change these saved settings. A surviving panel is focused without rerunning its
+section visibility, and captured configuration, including `open_in_new_tab`,
+`close_on_open`, syntax settings, and resource limits. Changing directories or
+calling `setup()` does not change these saved settings. A surviving panel is focused without rerunning its
 search; a recreated panel runs a fresh search and never applies replacements
 automatically. Results, selection, and occurrence exclusions survive while the
 session exists; disposed panels rebuild results. Only the latest panel's settings
@@ -396,6 +398,7 @@ require('searchlight').setup({
     recent = '<leader>sP',
   },
 
+  open_in_new_tab = true, -- false opens new panels in the current tab
   close_on_open = false, -- delete the panel after opening a match
 
   -- Search defaults for new sessions

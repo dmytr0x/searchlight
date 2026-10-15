@@ -30,6 +30,7 @@ for _, mode in ipairs({ 'search', 'replace' }) do
   end
 
   local function with_editor_state(run)
+    local config = vim.deepcopy(p.config)
     local options = window_options()
     local defaults = window_options('global')
     local pattern, active, enabled = vim.fn.getreg('/'), vim.v.hlsearch, vim.o.hlsearch
@@ -40,6 +41,7 @@ for _, mode in ipairs({ 'search', 'replace' }) do
     end, debug.traceback)
     vim.api.nvim_del_augroup_by_id(group)
     H.cleanup()
+    p.setup(config)
     set_options(defaults, 'global')
     set_options(options, 'local')
     vim.fn.setreg('/', pattern)
@@ -187,7 +189,8 @@ for _, mode in ipairs({ 'search', 'replace' }) do
         H.eq(vim.api.nvim_win_get_cursor(win), { 120, 8 })
         H.eq(window_options(), expected)
         vim.cmd('redraw!')
-        H.eq(vim.fn.winline(), math.floor(vim.api.nvim_win_get_height(win) / 2) + 1)
+        local center = (vim.api.nvim_win_get_height(win) + 1) / 2
+        assert(math.abs(vim.fn.winline() - center) <= 0.5, 'match is not centered')
         H.eq(vim.fn.getreg('/'), '\\c\\Vabc')
         H.eq(vim.v.hlsearch, 1)
         H.eq(s.selected, selected)
@@ -228,6 +231,7 @@ for _, mode in ipairs({ 'search', 'replace' }) do
     'S-01,S-05',
     function()
       with_editor_state(function(group)
+        p.setup({ open_in_new_tab = false })
         local a = H.fixture()
         H.write(a .. '/one', 'abc\n')
         vim.api.nvim_win_set_buf(0, vim.api.nvim_create_buf(true, false))

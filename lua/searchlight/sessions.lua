@@ -235,7 +235,7 @@ function M.dispose(s)
     end
   end
 end
-function M.activate(s)
+function M.activate(s, new_tab)
   if not M.owns(s) then
     return
   end
@@ -253,6 +253,7 @@ function M.activate(s)
   else
     local options = M.editor_options(vim.api.nvim_get_current_win())
     local buf = vim.api.nvim_get_current_buf()
+    -- Current-tab panels can reuse an untouched startup editor.
     local empty_editor = #vim.api.nvim_tabpage_list_wins(current_tab) == 1
       and vim.api.nvim_win_get_config(0).relative == ''
       and vim.bo[buf].buftype == ''
@@ -260,8 +261,9 @@ function M.activate(s)
       and not vim.bo[buf].modified
       and vim.api.nvim_buf_line_count(buf) == 1
       and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ''
-    -- The empty startup editor has no content or layout to preserve.
-    if not empty_editor then
+    if new_tab then
+      vim.cmd('tab split')
+    elseif not empty_editor then
       vim.cmd('topleft split')
     end
     vim.api.nvim_win_set_buf(0, s.buf)
