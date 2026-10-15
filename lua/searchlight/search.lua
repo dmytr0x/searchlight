@@ -751,8 +751,11 @@ function M.launch(s, gen)
 end
 
 function M.refresh(s)
-  M.invalidate(s)
-  s.timer = util.close_timer(s.timer)
+  M.invalidate(s, nil, false)
+  -- An immediate submission can still be waiting for the asynchronous rg probe.
+  if s.fields.query ~= '' then
+    transition(s, 'waiting')
+  end
   M.launch(s, s.generation)
 end
 

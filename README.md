@@ -129,7 +129,8 @@ if you prefer `,A`. Press `?` in the panel for help.
 
 **Searches are explicit.** Editing fields or source files marks results stale;
 press Enter in an input line or `<localleader>R` in normal mode to refresh.
-Option-toggle mappings and Lua `set()` updates schedule a debounced search.
+Option-toggle mappings debounce searches. Lua `set()` does the same for changed
+search inputs by default; its refresh policy can wait for Enter or submit immediately.
 In Search & Replace, Enter in Replace refreshes values; replacement is a separate action.
 
 ### A regex replacement example
@@ -459,57 +460,156 @@ overrides. `SearchlightMatch` and `SearchlightSelected` always follow `Search` a
 ## Lua API
 
 Use a session object returned by `search()` or `replace()`, or its numeric ID.
-Both functions accept an optional `close_on_open` boolean override, either as
-`search(root, options)` / `replace(root, options)` or as `search(options)` /
-`replace(options)` to use the current directory. Omitting it uses the `setup()`
-default. No other per-session creation options are accepted.
+Omit the session argument with `nil` to address the current panel. Programmatic
+updates do not activate a session or move focus; use `recent()` to restore it.
+Avoid modifying returned session internals.
 
-For example, a Search session:
+Both creation functions accept `search(root, options)` / `replace(root, options)`
+or `search(options)` / `replace(options)`. Root and options are optional. You can
+put `root` in the options table instead of passing it positionally; specifying
+both is an error. Omitting root uses the invoking window's current directory.
 
 ```lua
 local searchlight = require('searchlight')
-local session = searchlight.search(vim.fn.getcwd())
 
-searchlight.set(session, {
-  query = 'config',
+-- Prefill the panel and wait for Enter.
+local session = searchlight.search({
+  root = vim.fn.getcwd(),
+  query = 'TODO',
   include = { '*.lua', '*.md' },
   exclude = { 'vendor/**' },
-  case = false,
+  case = true,
   word = true,
   regex = false,
   open = false,
   ignored = false,
-  context = 1,
+  context = 0,
+  max_results = 2000,
+  close_on_open = true,
+  sections = { filters = false, help = false },
+  refresh = false,
 })
-searchlight.refresh(session) -- submit immediately instead of waiting for debounce
+
+-- Patch values and submit once, immediately, with the final inputs.
+searchlight.set(session, {
+  query = 'FIXME',
+  case = false,
+  sections = { filters = true },
+}, { refresh = 'immediate' })
+
+-- Replacement configuration prepares previews; it never applies edits.
+local replacement = searchlight.replace('/path/to/project', {
+  query = 'config',
+  replacement = 'settings',
+  include = { '*.lua' },
+  sections = { replace = true, filters = true },
+  refresh = 'immediate',
+})
 ```
 
-For replacement, create a separate session explicitly:
+Creation options and `set()` changes share these session keys:
 
-```lua
-local session = searchlight.replace(vim.fn.getcwd())
-searchlight.set(session, { query = 'config', replacement = 'settings' })
-searchlight.refresh(session)
-```
+| Key | Valid values and behavior |
+| --- | --- |
+| `query`, `replacement` | Single-line strings without CR/LF; `''` clears the field. `replacement` requires Search & Replace. |
+| `include`, `exclude` | Dense lists of single-line strings, each retaining comma-separated glob syntax; `{}` clears the filter. |
+| `case`, `word`, `regex`, `open`, `ignored` | Strict booleans. Explicit `false` overrides a configured `true`. |
+| `context` | Finite nonnegative integer; `0` hides context. |
+| `root` | Path string, normalized as for the positional root. |
+| `max_results` | Finite positive integer, affecting only this session's match limit. |
+| `close_on_open` | Boolean, affecting only this session's opening behavior. |
+| `sections` | Partial table of booleans for `filters`, `help`, and `replace`; `replace` requires Search & Replace, even when `false`. |
 
-`set()` rejects replacement updates in Search (even an empty string), and mode
-changes in either session type, before changing any input or search state.
-`set()` also accepts `root`. Filter values are lists of single-line strings, each
-of which can contain comma-separated globs. `setup()` option names and per-session
-`set()` option names differ, as shown above.
+Omitted keys keep existing values on update or use defaults on creation. Section
+settings merge by key. Filters default to visible, help to hidden, and Replace to
+visible in Search & Replace. Hidden fields retain active values; setting them does
+not reveal them. Focusing a field reveals its section. Tables are copied, so
+mutating or reusing an options table does not change earlier sessions or defaults.
+Lua `nil` means omission. Unknown keys and invalid mixed patches are rejected
+before changing session state or reading pending native edits. After validation,
+explicit API keys win and unmentioned native edits survive. Mode is immutable.
+
+The established `setup()` names supply defaults for the shorter session keys:
+
+| `setup()` setting | Session key |
+| --- | --- |
+| `match_case_sensetivity` | `case` |
+| `match_whole_words` | `word` |
+| `use_regular_expressions` | `regex` |
+| `only_search_open_files` | `open` |
+| `also_search_ignored_files` | `ignored` |
+| `context_size` | `context` |
+| `max_results`, `close_on_open` | Same names. |
+
+Syntax and performance settings without an interactive control remain `setup()`
+settings. Patterns keep ripgrep syntax and the single-line query/replacement
+contract; Vim patterns are not converted implicitly.
+
+Choose execution with creation's `options.refresh`, or the optional third argument
+of `set(session, changes, { refresh = ... })`:
+
+| `refresh` | Behavior |
+| --- | --- |
+| `false` | Apply and render without searching. Changed search inputs cancel obsolete work and mark results stale; an empty query clears results. |
+| `'debounced'` | Schedule one search after `debounce_ms`. |
+| `'immediate'` | Cancel pending debounce and submit once immediately. |
+
+Creation defaults to `false`. Existing two-argument `set()` calls default to
+`'debounced'` for changed search inputs. Visibility and `close_on_open` alone update
+without invalidating results or scheduling work. An explicitly requested
+`'debounced'` or `'immediate'` policy submits even unchanged inputs or presentation
+patches. Empty queries stay idle. Native typing and undo continue to wait for Enter;
+Enter and `refresh()` submit immediately. The execution table accepts only `refresh`.
 
 | Function | Purpose |
 | --- | --- |
 | `setup(options)` | Configure defaults and register commands, mappings, and events. |
-| `search(root, options)` | Create, activate, and return a Search session. Root and options are optional. |
-| `replace(root, options)` | Create, activate, and return a Search & Replace session. Root and options are optional. |
+| `search(root, options)` | Create, activate, and return a Search session. Root and options are optional; also accepts `search(options)`. |
+| `replace(root, options)` | Create, activate, and return a Search & Replace session. Root and options are optional; also accepts `replace(options)`. |
 | `recent(id)` | Restore and return the requested session; no ID restores the most recently used surviving one. |
-| `set(session, changes)` | Update fields, options, or root and debounce a search. |
+| `set(session, changes, execution)` | Update session values and choose a refresh policy. Execution is optional. |
 | `refresh(session)` | Search immediately with the current inputs. |
 | `navigate(session, delta)` | Move the selection by an occurrence offset. |
 | `open(session)` | Open the selected source occurrence; dispose the session if `close_on_open` is enabled. |
 | `action(session, name, arg)` | Invoke a panel action, such as `exclude`, `replace_next`, or `replace_all`. |
 | `close(session)` | Dispose a session and delete its panel. |
+
+### Custom workflow mappings
+
+Use Lua callbacks for dedicated workflows. Read dynamic values before opening the
+panel, since activation changes the current buffer:
+
+```lua
+-- Search the cursor word in Lua files, with literal whole-word matching.
+vim.keymap.set('n', '<leader>sw', function()
+  local query = vim.fn.expand('<cword>')
+  require('searchlight').search({
+    query = query,
+    include = { '*.lua' },
+    regex = false,
+    word = true,
+    case = true,
+    refresh = 'immediate',
+  })
+end, { desc = 'Searchlight: cursor word in Lua files' })
+
+-- Open an editable replacement preset without running it yet.
+vim.keymap.set('n', '<leader>sC', function()
+  require('searchlight').replace({
+    query = 'config',
+    replacement = 'settings',
+    include = { '*.lua' },
+    regex = false,
+    sections = { replace = true, filters = true },
+    refresh = false,
+  })
+end, { desc = 'Searchlight: prepare config replacement' })
+```
+
+For reusable presets, define a local Lua table and pass it to `search()` or
+`replace()` from a callback. To patch an existing session, keep its returned object
+or ID and pass it to `set()`. `setup().mappings` continues to configure entry
+mappings; set an entry to `false` when replacing it with your own callback.
 
 For capture-aware previews in a Search & Replace session after results settle:
 

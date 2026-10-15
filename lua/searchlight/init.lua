@@ -28,19 +28,22 @@ local function create_session(root, mode, options)
     options, root = root, nil
   end
   assert(options == nil or type(options) == 'table', 'Invalid Searchlight session options')
-  for key, value in pairs(options or {}) do
-    assert(
-      key == 'close_on_open' and type(value) == 'boolean',
-      'Invalid Searchlight session option: ' .. tostring(key)
-    )
-  end
-  local config = vim.tbl_extend('force', M.config, options or {})
+  assert(root == nil or type(root) == 'string', 'root must be a path string')
+  local changes = vim.deepcopy(options or {})
+  assert(
+    root == nil or changes.root == nil,
+    'Specify root either positionally or in options, not both'
+  )
+  local policy = input.execution({ refresh = changes.refresh }, false)
+  changes.refresh = nil
   root = scope.path(root and root ~= '' and root or vim.fn.getcwd())
-  local s = sessions.create(root, config, mode)
+  local initial = input.update(sessions.initial(root, M.config, mode), changes, scope.path)
+  local s = sessions.create(root, M.config, mode, initial)
   view.attach(s)
   view.render(s)
   sessions.activate(s)
   view.focus_field(s, 'query')
+  controller.execute(s, policy)
   return s
 end
 

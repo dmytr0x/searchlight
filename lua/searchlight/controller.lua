@@ -7,10 +7,11 @@ local M = {}
 
 -- Every input origin comes through this coordinator. Reading regions reports changes;
 -- only the coordinator chooses whether they invalidate, debounce or submit immediately.
-function M.synchronize(s, origin, changes)
+function M.synchronize(s, origin, changes, execution)
   -- Validate API updates before reading native edits or invalidating any state.
   if origin == 'set' then
     input.update(s, changes, scope.path)
+    input.execution(execution, 'debounced')
   end
   local search = require('searchlight.search')
   local read = require('searchlight.view').read(s)
@@ -29,9 +30,19 @@ function M.synchronize(s, origin, changes)
   if origin == 'set' then
     local next_input = input.update(s, changes, scope.path)
     s.fields, s.options, s.root = next_input.fields, next_input.options, next_input.root
+    s.config, s.sections = next_input.config, next_input.sections
     s.search_heading = next_input.heading
-    s.fields_dirty, s.navigation_end, s.selection_after = true, false, nil
-    search.invalidate(s)
+    s.fields_dirty = true
+    if next_input.search_changed or changed then
+      s.navigation_end, s.selection_after = false, nil
+    end
+    local policy = input.execution(execution, 'debounced')
+    -- Native edits alone retain their manual-submit contract under the default policy.
+    if execution and execution.refresh ~= nil or next_input.search_changed then
+      M.execute(s, policy, next_input.search_changed or changed)
+    elseif changed then
+      search.invalidate(s, '', false)
+    end
   elseif origin == 'refresh' then
     search.refresh(s)
   elseif changed then
@@ -41,9 +52,21 @@ function M.synchronize(s, origin, changes)
   return changed
 end
 
-function M.set(s, changes)
+-- Choose one invalidation/launch path for the complete committed update.
+function M.execute(s, policy, changed)
+  local search = require('searchlight.search')
+  if policy == 'immediate' then
+    search.refresh(s)
+  elseif policy == 'debounced' then
+    search.invalidate(s)
+  elseif changed then
+    search.invalidate(s, '', false)
+  end
+end
+
+function M.set(s, changes, execution)
   s = sessions.own(s)
-  M.synchronize(s, 'set', changes)
+  M.synchronize(s, 'set', changes, execution)
   require('searchlight.view').render(s)
 end
 

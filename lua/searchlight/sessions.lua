@@ -116,28 +116,46 @@ function M.own(s)
   assert(s, 'No owning Searchlight session')
   return s
 end
-function M.create(root, config, mode)
+-- Plain initial state allows validation before allocating any editor resources.
+function M.initial(root, config, mode)
   local capability = modes.get(mode)
+  local initial = {
+    root = root,
+    mode = mode,
+    fields = { query = '', include = {}, exclude = {} },
+    options = input.options(config),
+    sections = { filters = true },
+    config = vim.deepcopy(config),
+  }
+  initial.config.mappings = nil
+  if capability.replacement then
+    initial.fields.replacement, initial.sections.replace = '', true
+  end
+  return initial
+end
+
+function M.create(root, config, mode, initial)
+  initial = initial or M.initial(root, config, mode)
   M.next_id = M.next_id + 1
   local buf = vim.api.nvim_create_buf(true, false)
   vim.bo[buf].buftype, vim.bo[buf].bufhidden = 'nofile', 'hide'
   vim.bo[buf].swapfile, vim.bo[buf].filetype = false, 'searchlight'
-  local options = input.options(config)
   local s = {
     id = M.next_id,
     buf = buf,
-    root = root,
+    root = initial.root,
     mode = mode,
-    fields = { query = '', include = {}, exclude = {} },
-    options = options,
-    sections = { filters = true },
+    fields = initial.fields,
+    options = initial.options,
+    sections = initial.sections,
+    search_heading = initial.heading,
     results = {},
     selected = nil,
     generation = 0,
     jobs = {},
     pending_jobs = {},
     status = 'empty',
-    config = vim.deepcopy(config),
+    config = initial.config,
     exclusions = {},
     regions = {},
     result_rows = {},
@@ -146,10 +164,6 @@ function M.create(root, config, mode)
     identities = {},
     report = nil,
   }
-  s.config.mappings = nil
-  if capability.replacement then
-    s.fields.replacement, s.sections.replace = '', true
-  end
   M.by_id[s.id], M.by_buf[buf] = s, s
   M.touch(s)
   M.sync_name(s)

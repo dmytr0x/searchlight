@@ -5,6 +5,8 @@ local replace = require('searchlight.replace')
 local results = require('searchlight.results')
 local controller = require('searchlight.controller')
 local modes = require('searchlight.modes')
+local input = require('searchlight.input')
+local scope = require('searchlight.scope')
 local M = {}
 
 function M.navigate(s, delta, wrap)
@@ -122,7 +124,15 @@ function M.action(s, name, arg)
   then
     return nil, modes.replacement_reason
   end
-  controller.synchronize(s, 'display')
+  if name == 'toggle' then
+    assert(
+      type(s.options[arg]) == 'boolean',
+      'Unknown Searchlight boolean option: ' .. tostring(arg)
+    )
+  elseif name == 'section' then
+    input.update(s, { sections = { [arg] = false } }, scope.path)
+  end
+  controller.synchronize(s, (name == 'toggle' or name == 'section') and 'capture' or 'display')
   local cursor = vim.api.nvim_get_current_buf() == s.buf and vim.api.nvim_win_get_cursor(0)
   local path = cursor and (s.file_rows or {})[cursor[1]]
   if name == 'enter' then
@@ -145,8 +155,7 @@ function M.action(s, name, arg)
   if name == 'toggle' then
     controller.set(s, { [arg] = not s.options[arg] })
   elseif name == 'section' then
-    s.sections[arg] = not s.sections[arg]
-    view.render(s)
+    controller.set(s, { sections = { [arg] = not s.sections[arg] } })
     if arg == 'help' and s.sections.help and vim.api.nvim_get_current_buf() == s.buf then
       vim.api.nvim_win_set_cursor(0, { s.help_row, 0 })
       vim.cmd('normal! zt')
@@ -204,9 +213,8 @@ function M.action(s, name, arg)
       { prompt = 'Maximum matches (then refresh): ', default = tostring(s.config.max_results) },
       function(value)
         local limit = tonumber(value)
-        if limit and limit > 0 and limit == math.floor(limit) and sessions.owns(s) then
-          s.config.max_results = limit
-          controller.refresh(s)
+        if input.valid_context_size(limit) and limit > 0 and sessions.owns(s) then
+          controller.set(s, { max_results = limit }, { refresh = 'immediate' })
         end
       end
     )
