@@ -10,7 +10,7 @@ for i = 1, 200 do
   H.write(a .. string.format('/file%03d.txt', i), string.rep('abc abc abc abc\n', 25))
 end
 local started, first, beats, largest_gap, last = vim.uv.hrtime(), nil, 0, 0, vim.uv.hrtime()
-local s = p.new(a)
+local s = p.replace(a)
 local timer = vim.uv.new_timer()
 timer:start(
   0,
@@ -32,6 +32,7 @@ local ok, err = xpcall(function()
   H.eq(p.action(s, 'replace_all'), nil)
   assert(beats > 1, 'main loop did not continue during search')
   print(vim.json.encode({
+    mode = 'replace',
     files = 200,
     scope_matches = 20000,
     displayed = #s.results,
@@ -58,7 +59,7 @@ local ok, err = xpcall(function()
     return start(...)
   end
   local quiet_started = vim.uv.hrtime()
-  local quiet = p.new(b)
+  local quiet = p.search(b)
   p.set(quiet, { query = 'xyzzyq' })
   p.refresh(quiet)
   H.wait(quiet, 'complete')
@@ -68,6 +69,7 @@ local ok, err = xpcall(function()
   vim.system({ 'rg', '--json', 'xyzzyq', b }):wait()
   local rg_ms = (vim.uv.hrtime() - rg_started) / 1e6
   print(vim.json.encode({
+    mode = 'search',
     files = 2000,
     scope_matches = 0,
     rg_processes = processes,

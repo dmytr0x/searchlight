@@ -408,7 +408,7 @@ H.test('large result sets still color the middle of the panel', 'Syntax,Budgets'
   for i = 1, 3 do
     H.write(a .. '/' .. i .. '.lua', string.rep('abc=1\n', 16667))
   end
-  local s = p.new(a)
+  local s = p.search(a)
   s.config.max_results = 100000
   s.config.max_output_bytes = 64 * 1024 * 1024
   H.update(s, { query = 'abc', context = 0 })
@@ -1048,7 +1048,7 @@ H.test(
     syntax._test.reset()
     local a = H.fixture()
     H.write(a .. '/one.lua', 'local abc = "text"\n')
-    local s = H.search(a)
+    local s = H.replace(a)
     view.render(s)
     vim.cmd('split')
     settled()
@@ -1136,7 +1136,7 @@ H.test(
     end
     local latest = panels[3].snapshots[a .. '/root3/one.lua'].hash .. ':lua'
     assert(syntax._test.entries()[latest], 'focused panel could not reclaim cache capacity')
-    p.focus(panels[1].id)
+    p.recent(panels[1].id)
     settled()
     local first = panels[1].snapshots[a .. '/root1/one.lua'].hash .. ':lua'
     assert(syntax._test.entries()[first], 'focus change did not retry plain demand')

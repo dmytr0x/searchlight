@@ -188,13 +188,22 @@ end
 -- captured only by its jobs. Domain callbacks never read mutable input mid-run.
 local function prepare_run(s, gen)
   local request = {
+    mode = s.mode,
     root = s.root,
     fields = vim.deepcopy(s.fields),
     options = vim.deepcopy(s.options),
     config = vim.deepcopy(s.config),
   }
-  if request.fields.query:find('[\r\n]') or request.fields.replacement:find('[\r\n]') then
-    fail(s, gen, 'Search and Replace each accept one logical line')
+  if
+    request.fields.query:find('[\r\n]')
+    or request.mode == 'replace' and request.fields.replacement:find('[\r\n]')
+  then
+    fail(
+      s,
+      gen,
+      request.mode == 'replace' and 'Search and Replace each accept one logical line'
+        or 'Search accepts one logical line'
+    )
     return
   end
   local cap = rg.probe()
@@ -402,7 +411,9 @@ local function accept_record(run, match, item)
       transition(
         s,
         'truncated',
-        'Match cap reached; increase max_results and refresh for Replace all'
+        run.request.mode == 'replace'
+            and 'Match cap reached; increase max_results and refresh for Replace all'
+          or 'Match cap reached; increase max_results and refresh'
       )
       M.cancel(s)
       results.order(s)
@@ -436,7 +447,7 @@ local function accept_record(run, match, item)
       start = start,
       finish = stop,
       match = matched,
-      replacement = rg.value(submatch.replacement),
+      replacement = run.request.mode == 'replace' and rg.value(submatch.replacement) or nil,
       enabled = enabled,
       stale = false,
       generation = gen,
@@ -732,7 +743,7 @@ function M.launch(s, gen)
   end
   -- Inventory identities let alias writes from other roots invalidate unscanned sources.
   s.results, s.snapshots, s.identities = {}, {}, run.inventory.identities
-  transition(s, 'searching', rg.probe().reason)
+  transition(s, 'searching', run.request.mode == 'replace' and rg.probe().reason or nil)
   account_snapshots(run, 0)
   s.incomplete = false
   render(s)

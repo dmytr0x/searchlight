@@ -4,6 +4,7 @@ local view = require('searchlight.view')
 local replace = require('searchlight.replace')
 local results = require('searchlight.results')
 local controller = require('searchlight.controller')
+local modes = require('searchlight.modes')
 local M = {}
 
 function M.navigate(s, delta, wrap)
@@ -85,7 +86,7 @@ function M.open(s)
     return
   end
   local pattern = source_pattern(s)
-  sessions.focus(s)
+  sessions.activate(s)
   local options = sessions.editor_options(vim.api.nvim_get_current_win())
   vim.cmd('botright split')
   local win = vim.api.nvim_get_current_win()
@@ -106,6 +107,17 @@ end
 
 function M.action(s, name, arg)
   s = sessions.own(s)
+  if
+    not modes.can_replace(s)
+    and (
+      name == 'replace_next'
+      or name == 'replace_all'
+      or name == 'field' and arg == 'replacement'
+      or name == 'section' and arg == 'replace'
+    )
+  then
+    return nil, modes.replacement_reason
+  end
   controller.synchronize(s, 'display')
   local cursor = vim.api.nvim_get_current_buf() == s.buf and vim.api.nvim_win_get_cursor(0)
   local path = cursor and (s.file_rows or {})[cursor[1]]
@@ -139,7 +151,7 @@ function M.action(s, name, arg)
     view.focus_field(s, arg)
   elseif name == 'next_field' then
     local row, selected = vim.api.nvim_win_get_cursor(0)[1], 'query'
-    local fields = { 'query', 'replacement', 'include', 'exclude' }
+    local fields = modes.get(s.mode).fields
     for i, field in ipairs(fields) do
       local region = s.regions[field]
       if region and row > region.start and row <= region.stop then

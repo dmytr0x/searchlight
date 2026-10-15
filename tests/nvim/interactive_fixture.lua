@@ -1,4 +1,4 @@
--- A disposable root for the interactive Gate B walkthrough.
+-- Disposable roots for manual Search and Search & Replace walkthroughs.
 local H = dofile('tests/nvim/helpers.lua')
 local a, b = H.fixture()
 H.write(a .. '/one.lua', '雪 abc abc\nsecond abc\n')
@@ -8,7 +8,8 @@ H.write(a .. '/.venv/ignored.txt', 'abc\n')
 H.write(a .. '/.git/metadata', 'abc\n')
 H.write(b .. '/other.txt', 'xyz\n')
 require('searchlight').setup()
-_G.manual = { a = a, b = b, session = require('searchlight').new(a) }
+local p = require('searchlight')
+_G.manual = { a = a, b = b, search = p.search(a), replace = p.replace(a) }
 vim.api.nvim_create_autocmd('VimLeavePre', {
   once = true,
   callback = function()

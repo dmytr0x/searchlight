@@ -41,7 +41,7 @@ H.test(
   'Q-01,Q-05,Q-09',
   function()
     local a = H.fixture()
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, {
       query = 'abc',
       replacement = '雪',
@@ -98,8 +98,7 @@ H.test(
   'Q-06,Q-09',
   function()
     local a = H.fixture()
-    local s = p.new(a)
-    p.action(s, 'section', 'replace')
+    local s = p.search(a)
     local lines = vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
     H.eq(vim.list_slice(lines, 1, 8), {
       '[Search]    Aa[ ]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]',
@@ -127,15 +126,14 @@ H.test(
       '.*  ,x  Use regular expressions',
       '󰥩  ,o  Only search open files',
       '  ,g  Also search ignored files',
-      ',n Replace next | ,A Replace all',
       ',q Hide | ,D Close',
     }) do
       assert(text:find(legend, 1, true), 'missing help: ' .. legend)
     end
     p.action(s, 'section', 'help')
     p.action(s, 'field', 'replacement')
-    H.eq(s.sections.replace, true)
-    H.eq(vim.api.nvim_win_get_cursor(0)[1], s.regions.replacement.start + 1)
+    H.eq(s.sections.replace, nil)
+    H.eq(s.regions.replacement, nil)
   end
 )
 H.test(
@@ -208,7 +206,7 @@ H.test(
     })
     local other = H.search(a)
     local other_generation = other.generation
-    p.focus(s.id)
+    p.recent(s.id)
     H.eq(#s.results, 1)
 
     -- External writes bypass Neovim's source-change autocmds.
@@ -251,7 +249,7 @@ H.test(
   'Q-01,S-05',
   function()
     local a = H.fixture()
-    local s = p.new(a)
+    local s = p.replace(a)
     for _, key in ipairs({ 'd', 'w', 'x', 'c', 'r', 'g', 'I' }) do
       H.eq(vim.fn.maparg(key, 'n', false, true), {})
     end
@@ -292,7 +290,7 @@ H.test(
     H.write(a .. '/two.txt', 'abc\n')
     H.write(a .. '/three.md', 'abc\n')
     H.write(a .. '/skip.lua', 'abc\n')
-    local s = p.new(a)
+    local s = p.search(a)
     local region = s.regions.query
     vim.api.nvim_buf_set_lines(s.buf, region.start, region.stop, false, { 'abc' })
     p.refresh(s)
@@ -326,7 +324,7 @@ H.test('hidden sections retain effective values without invalidating results', '
   local a = H.fixture()
   H.write(a .. '/one.lua', 'abc\n')
   local s =
-    H.search(a, { query = 'abc', replacement = 'X', include = { '*.lua' }, exclude = { 'skip*' } })
+    H.replace(a, { query = 'abc', replacement = 'X', include = { '*.lua' }, exclude = { 'skip*' } })
   local generation = s.generation
   p.action(s, 'section', 'filters')
   p.action(s, 'section', 'replace')
@@ -415,7 +413,7 @@ H.test(
 H.test('field focus and selected result survive rendering and resizing', 'R-01,Q-01', function()
   local a = H.fixture()
   H.write(a .. '/one', 'abc abc\n')
-  local s = H.search(a, { query = 'abc', replacement = 'XX' })
+  local s = H.replace(a, { query = 'abc', replacement = 'XX' })
   p.navigate(s, 1)
   local selected = s.selected
   view.focus_field(s, 'replacement')
@@ -449,7 +447,7 @@ end)
 H.test('deleting a field boundary repairs labels and keeps valid input', 'Q-01,Q-06', function()
   local a = H.fixture()
   H.write(a .. '/one', 'abc\n')
-  local s = H.search(a)
+  local s = H.replace(a)
   local row = s.regions.query.start
   vim.api.nvim_buf_set_lines(s.buf, row, s.regions.replacement.start, false, { 'abc' })
   vim.wait(100)

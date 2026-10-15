@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="940" height="678" viewBox="0 0 940 678" role="img" aria-labelledby="title description">
-<title id="title">Searchlight: editable fields and grouped search results</title>
-<desc id="description">A panel generated from actual Neovim results for config in two Lua files. Seven occurrences share numbered source lines. The third occurrence is selected in amber; one excluded occurrence is dimmed. Icon labels are expanded to Open and Ignored.</desc>
+<title id="title">Searchlight Search &amp; Replace: editable fields and grouped results</title>
+<desc id="description">A Search &amp; Replace panel generated from actual Neovim results for config in two Lua files. Seven occurrences share numbered source lines. The third occurrence is selected in amber; one excluded occurrence is dimmed. Icon labels are expanded to Open and Ignored.</desc>
 <rect width="940" height="678" rx="14" fill="#191b26"/>
 <path d="M14 0H926Q940 0 940 14V54H0V14Q0 0 14 0" fill="#252735"/>
-<text x="24" y="34" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16">searchlight://1/config</text>
+<text x="24" y="34" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16">Search &amp; Replace · searchlight://1/config</text>
 <text x="916" y="34" text-anchor="end" fill="#a8afc2" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13">2 files · 7 occurrences</text>
 <text x="24.0" y="82" fill="#c4a7e7" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">[Search]    Aa[ ]  wd[ ]  .*[ ]  Open[ ]  Ignored[ ]  ↕[1]</text>
 <text x="24.0" y="105" fill="#dedde5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" xml:space="preserve">config</text>

@@ -1,11 +1,15 @@
 local input = require('searchlight.input')
+local modes = require('searchlight.modes')
 local M = {
   by_id = {},
   by_buf = {},
   next_id = 0,
   last = nil,
-  option_settings = input.option_settings,
 }
+function M.touch(s)
+  M.activation = (M.activation or 0) + 1
+  s.activated_at, M.last = M.activation, s.id
+end
 local panel_options = {
   wrap = false,
   number = false,
@@ -52,7 +56,6 @@ vim.api.nvim_create_autocmd('WinClosed', {
     editor_options[tonumber(event.match)] = nil
   end,
 })
-M.valid_context_size = input.valid_context_size
 
 local function panel_name(id, query)
   local label = (query or ''):gsub('[%c/\\#%%|"]', '_')
@@ -113,7 +116,8 @@ function M.own(s)
   assert(s, 'No owning Searchlight session')
   return s
 end
-function M.create(root, config)
+function M.create(root, config, mode)
+  local capability = modes.get(mode)
   M.next_id = M.next_id + 1
   local buf = vim.api.nvim_create_buf(true, false)
   vim.bo[buf].buftype, vim.bo[buf].bufhidden = 'nofile', 'hide'
@@ -123,9 +127,10 @@ function M.create(root, config)
     id = M.next_id,
     buf = buf,
     root = root,
-    fields = { query = '', replacement = '', include = {}, exclude = {} },
+    mode = mode,
+    fields = { query = '', include = {}, exclude = {} },
     options = options,
-    sections = { replace = true, filters = true },
+    sections = { filters = true },
     results = {},
     selected = nil,
     generation = 0,
@@ -141,7 +146,12 @@ function M.create(root, config)
     identities = {},
     report = nil,
   }
-  M.by_id[s.id], M.by_buf[buf], M.last = s, s, s.id
+  s.config.mappings = nil
+  if capability.replacement then
+    s.fields.replacement, s.sections.replace = '', true
+  end
+  M.by_id[s.id], M.by_buf[buf] = s, s
+  M.touch(s)
   M.sync_name(s)
   return s
 end
@@ -156,13 +166,13 @@ function M.dispose(s)
   if M.last == s.id then
     M.last = nil
     for id in pairs(M.by_id) do
-      if not M.last or id > M.last then
+      if not M.last or M.by_id[id].activated_at > M.by_id[M.last].activated_at then
         M.last = id
       end
     end
   end
 end
-function M.focus(s)
+function M.activate(s)
   if not M.owns(s) then
     return
   end
@@ -199,7 +209,7 @@ function M.focus(s)
   for name, value in pairs(panel_options) do
     vim.api.nvim_set_option_value(name, value, { win = win, scope = 'local' })
   end
-  M.last = s.id
+  M.touch(s)
   require('searchlight.highlight').request()
 end
 return M

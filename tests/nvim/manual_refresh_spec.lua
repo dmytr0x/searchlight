@@ -29,7 +29,7 @@ H.test(
 H.test('queued redraw preserves input edits and cancels pending debounce', 'Q-01,Async', function()
   local a = H.fixture()
   H.write(a .. '/one', 'abc xyz\n')
-  local s = H.search(a)
+  local s = H.replace(a)
   local original, calls = process.start, 0
   process.start = function(...)
     calls = calls + 1
@@ -62,7 +62,7 @@ for _, field in ipairs({ 'query', 'replacement', 'include', 'exclude' }) do
     local a = H.fixture()
     H.write(a .. '/one.lua', 'abc xyz\n')
     H.write(a .. '/two.txt', 'abc\n')
-    local s = H.search(a)
+    local s = H.replace(a)
     view.focus_field(s, field)
     local original, calls = process.start, 0
     process.start = function(...)
@@ -99,7 +99,7 @@ for _, field in ipairs({ 'query', 'replacement', 'include', 'exclude' }) do
   H.test('insert Enter submits ' .. field .. ' without a newline', 'Q-01,Q-05', function()
     local a = H.fixture()
     H.write(a .. '/one.lua', 'abc\n')
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, { query = 'abc' })
     p.refresh(s)
     H.wait(s, 'complete')

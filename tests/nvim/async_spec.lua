@@ -40,33 +40,38 @@ local function flush()
   vim.wait(20)
 end
 
-H.test('running searches keep their captured result budget', 'Async,Q-08', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc abc\n')
-  fake(function(calls)
-    local s = p.new(a)
-    p.set(s, { query = 'abc' })
-    p.refresh(s)
-    s.config.max_results = 1
-    calls[1].opts.stdout(nil, './one\0')
-    calls[1].done({ code = 0 })
-    flush()
-    calls[2].opts.stdout(nil, vim.json.encode({
-      type = 'match',
-      data = {
-        line_number = 1,
-        submatches = {
-          { start = 0, ['end'] = 3, match = { text = 'abc' } },
-          { start = 4, ['end'] = 7, match = { text = 'abc' } },
+for _, mode in ipairs({ 'search', 'replace' }) do
+  local function test(name, requirements, run)
+    H.test(mode .. ': ' .. name, requirements, run)
+  end
+  test('running searches keep their captured result budget', 'Async,Q-08', function()
+    local a = H.fixture()
+    H.write(a .. '/one', 'abc abc\n')
+    fake(function(calls)
+      local s = p[mode](a)
+      p.set(s, { query = 'abc' })
+      p.refresh(s)
+      s.config.max_results = 1
+      calls[1].opts.stdout(nil, './one\0')
+      calls[1].done({ code = 0 })
+      flush()
+      calls[2].opts.stdout(nil, vim.json.encode({
+        type = 'match',
+        data = {
+          line_number = 1,
+          submatches = {
+            { start = 0, ['end'] = 3, match = { text = 'abc' } },
+            { start = 4, ['end'] = 7, match = { text = 'abc' } },
+          },
         },
-      },
-    }) .. '\n')
-    calls[2].done({ code = 0 })
-    H.wait(s, 'complete')
-    H.eq(#s.results, 2)
-    H.eq(s.incomplete, false)
+      }) .. '\n')
+      calls[2].done({ code = 0 })
+      H.wait(s, 'complete')
+      H.eq(#s.results, 2)
+      H.eq(s.incomplete, false)
+    end)
   end)
-end)
+end
 
 for _, phase in ipairs({ 'inventory', 'shadow', 'matching' }) do
   H.test('process start errors settle handles and clean ' .. phase, 'Async', function()
@@ -93,7 +98,7 @@ for _, phase in ipairs({ 'inventory', 'shadow', 'matching' }) do
       return { kill = function() end }
     end
     local ok, err = xpcall(function()
-      local s = p.new(a)
+      local s = p.search(a)
       p.set(s, { query = 'abc' })
       p.refresh(s)
       H.wait(s, 'error')
@@ -108,118 +113,124 @@ for _, phase in ipairs({ 'inventory', 'shadow', 'matching' }) do
     assert(ok, err)
   end)
 end
-H.test('source edits cancel searches without automatically restarting', 'Async,S-05', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc\n')
-  local buf = H.buffer(a .. '/one')
-  fake(function(calls)
-    local s = p.new(a)
-    p.set(s, { query = 'abc' })
-    p.refresh(s)
-    H.eq(#calls, 1)
-    local old = calls[1]
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'abc edited' })
-    flush()
-    H.eq(old.killed, true)
-    H.eq(s.status, 'stale')
-    H.eq(s.timer, nil)
-    old.opts.stdout(nil, './one\0')
-    old.done({ code = 0 })
-    flush()
-    H.eq(#calls, 1)
-    H.eq(#s.results, 0)
-    H.eq(next(s.pending_jobs), nil)
-  end)
-end)
-
-H.test('queued source edits cannot cancel a later explicit search', 'Async,S-05', function()
-  local a = H.fixture()
-  H.write(a .. '/one', 'abc\n')
-  local buf = H.buffer(a .. '/one')
-  fake(function(calls)
-    local s = p.new(a)
-    p.set(s, { query = 'abc' })
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'abc edited' })
-    p.refresh(s)
-    local active = calls[1]
-    flush()
-    H.eq(active.killed, false)
-    H.eq(s.status, 'searching')
-    active.done({ code = 1 })
-    flush()
-    H.eq(s.status, 'complete')
-    H.eq(#calls, 1)
-  end)
-end)
-
-H.test(
-  'modifier edits cancel running searches and reject their late output',
-  'Q-09,Async',
-  function()
-    local a = H.fixture()
-    H.write(a .. '/one', 'abc ABC\n')
-    fake(function(calls)
-      local s = p.new(a)
-      p.set(s, { query = 'abc' })
-      p.refresh(s)
-      local generation = s.generation
-      local heading = '[Search]    Aa[yes]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]'
-      vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
-      flush()
-      assert(s.generation > generation)
-      H.eq(s.options.case, true)
-      H.eq(calls[1].killed, true)
-      calls[1].opts.stdout(nil, './one\0')
-      calls[1].done({ code = 0 })
-      flush()
-      H.eq(#s.results, 0)
-      H.eq(#calls, 1)
-      H.eq(s.status, 'stale')
-      p.refresh(s)
-      H.eq(#calls, 2)
-      H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, 1, false), { heading })
-      calls[2].opts.stdout(nil, './one\0')
-      calls[2].done({ code = 0 })
-      flush()
-      assert(vim.tbl_contains(calls[3].argv, '--case-sensitive'))
-      calls[3].done({ code = 1 })
-      flush()
-      H.eq(s.status, 'complete')
-    end)
+for _, mode in ipairs({ 'search', 'replace' }) do
+  local function test(name, requirements, run)
+    H.test(mode .. ': ' .. name, requirements, run)
   end
-)
-H.test(
-  'overlapping generations cancel old jobs and reject late chunks and completion',
-  'Async,Q-01',
-  function()
+  test('source edits cancel searches without automatically restarting', 'Async,S-05', function()
     local a = H.fixture()
     H.write(a .. '/one', 'abc\n')
+    local buf = H.buffer(a .. '/one')
     fake(function(calls)
-      local s = p.new(a)
+      local s = p[mode](a)
       p.set(s, { query = 'abc' })
       p.refresh(s)
       H.eq(#calls, 1)
       local old = calls[1]
-      p.set(s, { query = 'xyz' })
-      p.refresh(s)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'abc edited' })
+      flush()
       H.eq(old.killed, true)
+      H.eq(s.status, 'stale')
+      H.eq(s.timer, nil)
       old.opts.stdout(nil, './one\0')
       old.done({ code = 0 })
       flush()
+      H.eq(#calls, 1)
       H.eq(#s.results, 0)
-      H.eq(#calls, 2)
-      calls[2].done({ code = 1 })
+      H.eq(next(s.pending_jobs), nil)
+    end)
+  end)
+
+  test('queued source edits cannot cancel a later explicit search', 'Async,S-05', function()
+    local a = H.fixture()
+    H.write(a .. '/one', 'abc\n')
+    local buf = H.buffer(a .. '/one')
+    fake(function(calls)
+      local s = p[mode](a)
+      p.set(s, { query = 'abc' })
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'abc edited' })
+      p.refresh(s)
+      local active = calls[1]
+      flush()
+      H.eq(active.killed, false)
+      H.eq(s.status, 'searching')
+      active.done({ code = 1 })
       flush()
       H.eq(s.status, 'complete')
-      H.eq(#s.results, 0)
+      H.eq(#calls, 1)
     end)
-  end
-)
+  end)
+
+  test(
+    'modifier edits cancel running searches and reject their late output',
+    'Q-09,Async',
+    function()
+      local a = H.fixture()
+      H.write(a .. '/one', 'abc ABC\n')
+      fake(function(calls)
+        local s = p[mode](a)
+        p.set(s, { query = 'abc' })
+        p.refresh(s)
+        local generation = s.generation
+        local heading = '[Search]    Aa[yes]  wd[ ]  .*[ ]  󰥩[ ]  [ ]  ↕[2]'
+        vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, { heading })
+        flush()
+        assert(s.generation > generation)
+        H.eq(s.options.case, true)
+        H.eq(calls[1].killed, true)
+        calls[1].opts.stdout(nil, './one\0')
+        calls[1].done({ code = 0 })
+        flush()
+        H.eq(#s.results, 0)
+        H.eq(#calls, 1)
+        H.eq(s.status, 'stale')
+        p.refresh(s)
+        H.eq(#calls, 2)
+        H.eq(vim.api.nvim_buf_get_lines(s.buf, 0, 1, false), { heading })
+        calls[2].opts.stdout(nil, './one\0')
+        calls[2].done({ code = 0 })
+        flush()
+        assert(vim.tbl_contains(calls[3].argv, '--case-sensitive'))
+        calls[3].done({ code = 1 })
+        flush()
+        H.eq(s.status, 'complete')
+      end)
+    end
+  )
+  test(
+    'overlapping generations cancel old jobs and reject late chunks and completion',
+    'Async,Q-01',
+    function()
+      local a = H.fixture()
+      H.write(a .. '/one', 'abc\n')
+      fake(function(calls)
+        local s = p[mode](a)
+        p.set(s, { query = 'abc' })
+        p.refresh(s)
+        H.eq(#calls, 1)
+        local old = calls[1]
+        p.set(s, { query = 'xyz' })
+        p.refresh(s)
+        H.eq(old.killed, true)
+        old.opts.stdout(nil, './one\0')
+        old.done({ code = 0 })
+        flush()
+        H.eq(#s.results, 0)
+        H.eq(#calls, 2)
+        calls[2].done({ code = 1 })
+        flush()
+        H.eq(s.status, 'complete')
+        H.eq(#s.results, 0)
+      end)
+    end
+  )
+end
+
 H.test('context edits cancel match jobs and reject late context records', 'Q-10,Async', function()
   local a = H.fixture()
   H.write(a .. '/one', 'above\nabc\nbelow\n')
   fake(function(calls)
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, { query = 'abc' })
     p.refresh(s)
     calls[1].opts.stdout(nil, './one\0')
@@ -274,10 +285,10 @@ H.test(
   function()
     local a, b = H.fixture()
     fake(function(calls)
-      local sa = p.new(a)
+      local sa = p.search(a)
       p.set(sa, { query = 'abc' })
       p.refresh(sa)
-      local sb = p.new(b)
+      local sb = p.search(b)
       p.set(sb, { query = 'xyz' })
       p.refresh(sb)
       p.close(sa)
@@ -298,7 +309,7 @@ H.test(
   function()
     local a = H.fixture()
     fake(function(calls)
-      local s = p.new(a)
+      local s = p.search(a)
       p.set(s, { query = 'abc' })
       p.set(s, { query = '' })
       vim.wait(30)
@@ -319,7 +330,7 @@ H.test(
 H.test('each search-affecting field supersedes queued output', 'Q-05,Q-08,R-02,Async', function()
   local a, b = H.fixture()
   fake(function(calls)
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, { query = 'abc' })
     p.refresh(s)
     for _, change in ipairs({
@@ -356,7 +367,7 @@ H.test(
     local a = H.fixture()
     H.write(a .. '/one', 'abc\n')
     fake(function(calls)
-      local s = p.new(a)
+      local s = p.replace(a)
       p.set(s, { query = 'abc' })
       p.refresh(s)
       calls[1].opts.stdout(nil, './one\0')
@@ -390,7 +401,7 @@ H.test(
   function()
     local a = H.fixture()
     fake(function(calls)
-      local s = p.new(a)
+      local s = p.search(a)
       s.config.max_output_bytes = 64
       p.set(s, { query = 'abc' })
       p.refresh(s)
@@ -411,7 +422,7 @@ H.test(
     local a = H.fixture()
     H.write(a .. '/one', 'abc old\n')
     fake(function(calls)
-      local s = p.new(a)
+      local s = p.replace(a)
       p.set(s, { query = 'abc', replacement = 'X' })
       p.refresh(s)
       calls[1].opts.stdout(nil, './one\0')
@@ -442,7 +453,7 @@ H.test('buffer job concurrency stays bounded', 'Async,B-01', function()
     H.write(a .. '/file' .. i, 'abc\n')
   end
   fake(function(calls)
-    local s = p.new(a)
+    local s = p.search(a)
     s.config.concurrency = 2
     p.set(s, { query = 'abc' })
     p.refresh(s)
@@ -470,7 +481,7 @@ H.test(
     local a = H.fixture()
     H.write(a .. '/one', 'abc abc\n')
     fake(function(calls)
-      local s = p.new(a)
+      local s = p.replace(a)
       s.config.max_results = 1
       p.set(s, { query = 'abc', replacement = 'X' })
       p.refresh(s)
@@ -507,7 +518,7 @@ H.test('buffer edits during snapshot jobs invalidate old matches', 'R-05,B-01,As
   H.write(a .. '/one', 'abc\n')
   local buf = H.buffer(a .. '/one')
   fake(function(calls)
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, { query = 'abc' })
     p.refresh(s)
     calls[1].opts.stdout(nil, './one\0')

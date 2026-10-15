@@ -3,6 +3,7 @@ local results = require('searchlight.results')
 local replace = require('searchlight.replace')
 local controller = require('searchlight.controller')
 local syntax = require('searchlight.highlight')
+local modes = require('searchlight.modes')
 local M = { namespace = vim.api.nvim_create_namespace('searchlight') }
 local panel_colors = vim.api.nvim_create_namespace('searchlight_panel_colors')
 local cursor_marker = vim.api.nvim_create_namespace('searchlight_cursor_marker')
@@ -83,14 +84,6 @@ local function read_heading(s)
     return vim.api.nvim_buf_get_lines(s.buf, heading[1], heading[1] + 1, false)[1]
   end
   return s.search_heading or input.heading(s.options)
-end
-
-function M.read_options(s)
-  return input.parse_heading(read_heading(s), s.options)
-end
-
-function M.set_options(s, changes)
-  s.search_heading = input.patch_heading(s.search_heading or input.heading(s.options), changes)
 end
 
 local function region_bounds(s, region)
@@ -216,7 +209,9 @@ local function add_help(s, add)
     '[Help] Edit modifier brackets: non-space enables; empty or spaces disable. Tab cycles fields.'
   ) + 1
   add(
-    'Typing never searches. Press Enter in an input line or the controls to refresh search/previews.'
+    modes.can_replace(s)
+        and 'Typing never searches. Press Enter in an input line or the controls to refresh search/previews.'
+      or 'Typing never searches. Press Enter in an input line or the controls to refresh search.'
   )
   add('[Search controls]')
   for _, control in ipairs(controls) do
@@ -229,37 +224,45 @@ local function add_help(s, add)
       or 'Policy: include hidden; respect config/ignores; exclude .git'
   )
   add('[Fields]')
-  add(key('/') .. ' Search | ' .. key('r') .. ' Replace')
+  add(key('/') .. ' Search' .. (modes.can_replace(s) and ' | ' .. key('r') .. ' Replace' or ''))
   add(key('I') .. ' Include | ' .. key('E') .. ' Exclude')
   add('Positive globs separated by commas or lines; includes form a union, exclusions win.')
-  add(key('f') .. ' Hide/show filters | ' .. key('v') .. ' Hide/show Replace')
-  add('[Results and replacement] Positions use byte columns.')
+  add(
+    key('f')
+      .. ' Hide/show filters'
+      .. (modes.can_replace(s) and ' | ' .. key('v') .. ' Hide/show Replace' or '')
+  )
+  add('[Results] Positions use byte columns.')
   add('[ / ] Previous / next | <Enter> Open | <Space> Enable/exclude')
   add('n / N Next / previous match; counts supported, wrapping follows wrapscan.')
   add('Opening a result highlights its file matches for native n / N; :nohlsearch clears them.')
   add('Literal searches follow edits; regex/word/capped ranges need refresh and reopen.')
   add('One header per file; <Enter> on a header collapses/expands its matches.')
   add('Each source line appears once. Move onto a highlight to act on that occurrence.')
-  add(
-    '○ Match line | ● Cursor line; excluded hits are dimmed; refresh stale results before replacing.'
-  )
-  add(key('n') .. ' Replace next | ' .. key('A') .. ' Replace all')
-  add('Empty replacement deletes. Edit input fields and Search modifier brackets.')
-  add(
-    'Regex captures: $1, ${name}; $$ is a literal dollar. Edits stay unsaved: review, :write/:wall, u/C-r in source.'
-  )
+  add('○ Match line | ● Cursor line; excluded hits are dimmed.')
+  if modes.can_replace(s) then
+    add(key('n') .. ' Replace next | ' .. key('A') .. ' Replace all')
+    add('Empty replacement deletes. Edit input fields and Search modifier brackets.')
+    add(
+      'Regex captures: $1, ${name}; $$ is a literal dollar. Edits stay unsaved: review, :write/:wall, u/C-r in source.'
+    )
+  end
   add(
     'Only open files uses current listed normal buffers. Roots are captured; :cd does not retarget a session.'
   )
+  if modes.can_replace(s) then
+    add(
+      'Replace all needs complete uncapped results. '
+        .. key('L')
+        .. ' raises the limit; '
+        .. key('R')
+        .. ' refreshes. Undo is per file.'
+    )
+  end
+  add('Increase the match limit and refresh to see capped results.')
+  add(':SearchlightNew [root] searches; :SearchlightReplaceNew [root] creates Search & Replace.')
   add(
-    'Replace all needs complete uncapped results. '
-      .. key('L')
-      .. ' raises the limit; '
-      .. key('R')
-      .. ' refreshes. Undo is per file.'
-  )
-  add(
-    'Use :SearchlightNew [root], :SearchlightFocus [id], :SearchlightClose. Sections keep hidden values.'
+    'Use :SearchlightFocus [id] to restore; :SearchlightClose to close. Filters keep hidden values.'
   )
   add('[Session]')
   add(key('d') .. ' Root | ' .. key('L') .. ' Limit | ' .. key('R') .. ' Refresh')
@@ -315,14 +318,14 @@ local function build_layout(s)
       group = 'SearchlightControl',
     })
   end
-  if s.sections.replace then
+  if modes.can_replace(s) and s.sections.replace then
     field('replacement', '[Replace]', s.fields.replacement)
   end
   if s.sections.filters then
     field('include', '[Include]', s.fields.include)
     field('exclude', '[Exclude]', s.fields.exclude)
   end
-  if not s.sections.replace and s.fields.replacement ~= '' then
+  if modes.can_replace(s) and not s.sections.replace and s.fields.replacement ~= '' then
     add('[Replace hidden; active value: ' .. vim.inspect(s.fields.replacement) .. ']')
   end
   if not s.sections.filters and (#s.fields.include > 0 or #s.fields.exclude > 0) then
@@ -337,7 +340,7 @@ local function build_layout(s)
   if s.message and s.message ~= '' then
     add(s.message:gsub('[\r\n]', ' '))
   end
-  if s.report then
+  if modes.can_replace(s) and s.report then
     add('Last apply: ' .. replace.summary(s.report))
   end
   add('')
@@ -627,6 +630,11 @@ function M.request_render(s)
 end
 
 function M.focus_field(s, name)
+  if not modes.has_field(s, name) then
+    return nil,
+      name == 'replacement' and modes.replacement_reason
+        or 'Unknown Searchlight field: ' .. tostring(name)
+  end
   controller.synchronize(s, 'display')
   if name == 'replacement' then
     s.sections.replace = true
@@ -635,7 +643,7 @@ function M.focus_field(s, name)
     s.sections.filters = true
   end
   M.render(s)
-  sessions.focus(s)
+  sessions.activate(s)
   local region = s.regions[name]
   if region then
     vim.api.nvim_win_set_cursor(0, { region.start + 1, 0 })
@@ -674,7 +682,7 @@ local function register_events(s)
     buffer = s.buf,
     callback = function()
       if sessions.owns(s) then
-        sessions.last = s.id
+        sessions.touch(s)
       end
     end,
   })
@@ -741,6 +749,9 @@ local function register_mappings(s)
     E = { 'field', 'exclude' },
     ['<Tab>'] = { 'next_field' },
   }
+  if not modes.can_replace(s) then
+    keys.r, keys.v, keys.n, keys.A = nil, nil, nil, nil
+  end
   for _, control in ipairs(controls) do
     keys[control.key] = { 'toggle', control.option }
   end

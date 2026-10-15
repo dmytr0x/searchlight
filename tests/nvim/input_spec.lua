@@ -1,0 +1,27 @@
+local H = require('tests.helpers')
+local p = require('searchlight')
+local input = require('searchlight.input')
+
+H.test('context input validates nonnegative whole numbers', 'API,Q-06', function()
+  assert(input.valid_context_size(0))
+  assert(input.valid_context_size(3))
+  for _, value in ipairs({ -1, 0.5, math.huge, '2', false }) do
+    assert(not input.valid_context_size(value))
+  end
+  assert(not input.valid_context_size(nil))
+end)
+
+H.test('controller updates modifier controls and context together', 'API,Q-06', function()
+  local a = H.fixture()
+  H.write(a .. '/one', 'abc ABC\n')
+  local s = H.search(a)
+  p.set(s, { case = true, context = 0 })
+  local read = require('searchlight.view').read(s)
+  H.eq(read.options.case, true)
+  H.eq(read.options.context, 0)
+  p.refresh(s)
+  H.wait(s, 'complete')
+  H.eq(#s.results, 1)
+  H.eq(s.options.case, true)
+  H.eq(s.options.context, 0)
+end)

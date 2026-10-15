@@ -81,7 +81,7 @@ local function settled()
   phase = 'interaction'
 end
 local function search(path, options)
-  local s = p.new(path)
+  local s = p.search(path)
   local first, parses = nil, syntax.diagnostics().parses
   local start = vim.uv.hrtime()
   local observer = vim.uv.new_timer()
@@ -228,7 +228,7 @@ local ok, err = xpcall(function()
   local cycles = root .. '/cycles'
   H.write(cycles .. '/one.lua', 'local abc = "abc"\nreturn abc\n')
   for i = 1, 100 do
-    local panel = p.new(cycles)
+    local panel = p.replace(cycles)
     p.set(panel, { query = 'abc', replacement = 'abc' .. i, context = 1 })
     p.refresh(panel)
     H.wait(panel, 'complete')
@@ -250,7 +250,7 @@ local ok, err = xpcall(function()
   end
   local panels = {}
   for i = 1, 10 do
-    panels[i] = p.new(cycles)
+    panels[i] = p.search(cycles)
     p.set(panels[i], { query = 'abc' })
     p.refresh(panels[i])
     H.wait(panels[i])

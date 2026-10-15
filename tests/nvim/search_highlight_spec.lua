@@ -98,7 +98,7 @@ H.test(
       H.write(a .. '/one.unsupported', 'function pending pending\nworker pending\n')
       local s = H.search(a, { query = 'function', context = 0 })
       p.open(s)
-      p.focus(s.id)
+      p.recent(s.id)
       local region = s.regions.query
       vim.api.nvim_buf_set_lines(s.buf, region.start, region.stop, false, { 'pending' })
       p.refresh(s)
@@ -170,7 +170,7 @@ H.test('leaving a panel restores the window highlight namespace', 'S-05', functi
     local colors = vim.api.nvim_create_namespace('searchlight_test_window_colors')
     vim.api.nvim_win_set_hl_ns(win, colors)
     local ok, err = xpcall(function()
-      local s = p.new(a)
+      local s = p.search(a)
       -- New may split an existing editor; reuse its panel window for the check.
       local panel_win = vim.api.nvim_get_current_win()
       local source = vim.api.nvim_create_buf(false, true)

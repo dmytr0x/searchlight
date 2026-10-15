@@ -2,10 +2,8 @@ local sources = require('searchlight.sources')
 local search = require('searchlight.search')
 local rg = require('searchlight.rg')
 local results = require('searchlight.results')
+local modes = require('searchlight.modes')
 local M = { busy = {} }
-
--- Retained callable entry point; occurrence selection belongs to results.
-M.selected = results.selected
 
 function M.preview(result)
   if not result or result.stale or result.replacement == nil then
@@ -242,6 +240,9 @@ local function publish_report(s, report, changed)
 end
 
 function M.apply(s, all)
+  if not modes.can_replace(s) then
+    return nil, modes.replacement_reason
+  end
   local valid, err = ready(s, all)
   if not valid then
     s.message = err

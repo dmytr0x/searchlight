@@ -226,7 +226,7 @@ function M.match(s)
     '--encoding=utf-8',
     '--context=' .. string.format('%.0f', s.options.context),
   })
-  if M.probe().replacement then
+  if s.mode == 'replace' and M.probe().replacement then
     table.insert(args, '--replace=' .. s.fields.replacement)
   end
   vim.list_extend(args, { '--', s.fields.query, '-' })

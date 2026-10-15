@@ -1,4 +1,5 @@
 -- Input rules have no session, job, buffer or window ownership.
+local modes = require('searchlight.modes')
 local M = {}
 local controls = {
   {
@@ -39,11 +40,8 @@ local controls = {
 }
 
 M.controls = controls
--- Keep the observable settings map generated from the single control definition.
-M.option_settings = {}
 M.defaults = { context_size = 2 }
 for _, control in ipairs(controls) do
-  M.option_settings[control.option] = control.setting
   M.defaults[control.setting] = false
 end
 
@@ -118,6 +116,8 @@ end
 function M.update(s, changes, path)
   local fields, options, root = vim.deepcopy(s.fields), vim.deepcopy(s.options), s.root
   for key, value in pairs(changes) do
+    assert(key ~= 'mode', 'Searchlight session mode cannot be changed')
+    assert(key ~= 'replacement' or modes.can_replace(s), modes.replacement_reason)
     if fields[key] ~= nil then
       if key == 'include' or key == 'exclude' then
         assert(type(value) == 'table', key .. ' must be a list of globs')

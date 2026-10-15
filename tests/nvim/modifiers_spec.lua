@@ -23,7 +23,7 @@ H.test(
   function()
     local a = H.fixture()
     H.write(a .. '/one', '# Persistent search panel\nSearch SEARCH search\n')
-    local s = p.new(a)
+    local s = p.search(a)
     local generation = s.generation
     keys('isearch<Esc>')
     wait_for_edit(s, generation)
@@ -67,7 +67,7 @@ H.test(
         source_buf = H.buffer(a .. '/one', { '# Unsaved search panel', 'Search SEARCH search' })
         p.refresh(s)
         H.wait(s, 'complete')
-        p.focus(s.id)
+        p.recent(s.id)
       end
       for _, regex in ipairs({ false, true }) do
         if regex then
@@ -120,11 +120,11 @@ H.test(
       { label = '󰥩', option = 'open', query = 'abc', off = 4, on = 3 },
       { label = '', option = 'ignored', query = 'abc', off = 4, on = 5 },
     }) do
-      local s = H.search(a, { query = control.query })
+      local s = H.replace(a, { query = control.query })
       H.eq(#s.results, control.off, control.option)
-      local other = H.search(a, { query = control.query })
+      local other = H.replace(a, { query = control.query })
       local other_generation = other.generation
-      p.focus(s.id)
+      p.recent(s.id)
       p.action(s, 'section', 'replace')
       p.action(s, 'section', 'filters')
       for _, method in ipairs({ 'edit', 'toggle' }) do
@@ -155,7 +155,7 @@ H.test(
   'Q-01,Q-09',
   function()
     local a = H.fixture()
-    local s = p.new(a)
+    local s = p.search(a)
     p.set(s, { query = '[Search] text' })
     view.render(s)
     H.eq(s.fields.query, '[Search] text')
@@ -217,9 +217,9 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
   local a = H.fixture()
   local before = vim.deepcopy(p.config)
   local ok, err = xpcall(function()
-    local existing = p.new(a)
+    local existing = p.search(a)
     p.setup({ match_case_sensetivity = true, use_regular_expressions = true })
-    local s = p.new(a)
+    local s = p.search(a)
     H.eq(
       s.options,
       { case = true, word = false, regex = true, open = false, ignored = false, context = 2 }
@@ -233,7 +233,7 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
       only_search_open_files = true,
       also_search_ignored_files = true,
     })
-    local all = p.new(a)
+    local all = p.search(a)
     H.eq(
       all.options,
       { case = true, word = true, regex = true, open = true, ignored = true, context = 2 }
@@ -244,7 +244,7 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
     H.eq(all.options, existing.options)
     p.setup()
     H.eq(
-      p.new(a).options,
+      p.search(a).options,
       { case = true, word = true, regex = true, open = true, ignored = true, context = 2 }
     )
     H.eq(pcall(p.setup, { use_regular_expressions = 'true' }), false)
@@ -262,12 +262,12 @@ H.test(
   function()
     local a = H.fixture()
     H.write(a .. '/one', 'abc\n')
-    local s = p.new(a)
+    local s = p.replace(a)
     p.set(s, { query = 'abc' })
     p.refresh(s)
     H.wait(s, 'complete')
-    local other = p.new(a)
-    p.focus(s.id)
+    local other = p.replace(a)
+    p.recent(s.id)
     p.action(s, 'section', 'replace')
     p.action(s, 'section', 'filters')
     local controls =
@@ -365,7 +365,7 @@ H.test(
   function()
     local a = H.fixture()
     H.write(a .. '/one', 'abc ABC\n')
-    local s = p.new(a)
+    local s = p.search(a)
     local generation = s.generation
     vim.api.nvim_buf_set_lines(s.buf, 0, 1, false, {
       '[Search]    Aa[x]  wd[x]  .*[x]  󰥩[x]  [x]  ↕[2]',

@@ -8,6 +8,10 @@ local M = {}
 -- Every input origin comes through this coordinator. Reading regions reports changes;
 -- only the coordinator chooses whether they invalidate, debounce or submit immediately.
 function M.synchronize(s, origin, changes)
+  -- Validate API updates before reading native edits or invalidating any state.
+  if origin == 'set' then
+    input.update(s, changes, scope.path)
+  end
   local search = require('searchlight.search')
   local read = require('searchlight.view').read(s)
   if read then

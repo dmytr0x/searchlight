@@ -18,14 +18,14 @@ H.test(
   end
 )
 H.test(
-  'Focus without an id restores the most recently used panel including :buffer access',
+  'recent without an id restores the most recently used panel including :buffer access',
   'S-03',
   function()
     local a = H.fixture()
-    local sa, sb = p.new(a), p.new(a)
+    local sa, sb = p.search(a), p.search(a)
     vim.cmd('buffer ' .. sa.buf)
     p.action(sa, 'hide')
-    H.eq(p.focus(), sa)
+    H.eq(p.recent(), sa)
     assert(sessions.owns(sb))
   end
 )
@@ -60,7 +60,7 @@ H.test('opening search preserves named, modified, and special empty buffers', 'S
     end
     vim.api.nvim_win_set_buf(0, buf)
     local editor = vim.api.nvim_get_current_win()
-    local s = p.new(a)
+    local s = p.search(a)
     H.eq(#vim.api.nvim_tabpage_list_wins(0), 2)
     H.eq(vim.api.nvim_win_get_buf(editor), buf)
     p.action(s, 'hide')
@@ -73,7 +73,7 @@ H.test('opening search preserves an existing layout of empty editor splits', 'S-
   vim.api.nvim_win_set_buf(0, buf)
   vim.cmd('vsplit')
   local editors = vim.api.nvim_tabpage_list_wins(0)
-  p.new(a)
+  p.search(a)
   H.eq(#vim.api.nvim_tabpage_list_wins(0), 3)
   for _, win in ipairs(editors) do
     H.eq(vim.api.nvim_win_get_buf(win), buf)
@@ -82,7 +82,7 @@ end)
 H.test('every New Search creates a uniquely named listed nofile top split', 'S-01,S-02', function()
   local a = H.fixture()
   local editor = vim.api.nvim_get_current_win()
-  local sa, sb = p.new(a), p.new(a)
+  local sa, sb = p.search(a), p.search(a)
   assert(sa.id ~= sb.id and sa.buf ~= sb.buf)
   H.eq(vim.api.nvim_buf_get_name(sa.buf), 'searchlight://' .. sa.id)
   H.eq(vim.bo[sa.buf].bufhidden, 'hide')
@@ -123,7 +123,7 @@ H.test('listed panel names include the search term and stay unique', 'S-01,S-02'
   H.eq(vim.api.nvim_get_current_buf(), sa.buf)
 end)
 H.test(
-  'window closure hides, focus restores, explicit delete disposes only the owner',
+  'window closure hides, recent restores, explicit delete disposes only the owner',
   'S-03,S-04',
   function()
     local a, b = H.fixture()
@@ -133,14 +133,14 @@ H.test(
     p.action(sa, 'hide')
     H.eq(#vim.fn.win_findbuf(sa.buf), 0)
     assert(sessions.owns(sa))
-    H.eq(p.focus(sa.id), sa)
+    H.eq(p.recent(sa.id), sa)
     H.eq(vim.api.nvim_get_current_buf(), sa.buf)
     H.eq(vim.api.nvim_win_get_position(0), { 0, 0 })
     H.eq(vim.api.nvim_win_get_width(0), vim.o.columns)
     vim.cmd('bdelete ' .. sa.buf)
     H.eq(sessions.get(sa.id), nil)
     assert(sessions.owns(sb))
-    H.eq(p.focus(), sb)
+    H.eq(p.recent(), sb)
   end
 )
 H.test(
@@ -162,7 +162,7 @@ H.test(
     H.eq(sa.selected, selected)
     H.eq(sa.generation, generation)
     assert(sessions.owns(sa) and sessions.owns(sb))
-    p.focus(sa.id)
+    p.recent(sa.id)
     H.eq(vim.api.nvim_get_current_buf(), sa.buf)
     H.eq(#vim.api.nvim_get_autocmds({ group = 'SearchlightSources' }), handlers)
   end
@@ -182,7 +182,7 @@ H.test(
     H.eq(vim.api.nvim_buf_get_name(buf), a .. '/one')
     assert(sessions.owns(sa) and sessions.owns(sb))
     assert(#vim.fn.win_findbuf(sa.buf) > 0 and #vim.fn.win_findbuf(sb.buf) > 0)
-    p.focus(sa.id)
+    p.recent(sa.id)
     H.eq(sa.selected, selected)
     H.eq(sa.results[2].enabled, false)
   end
@@ -198,7 +198,7 @@ H.test('source jumps center matches while preserving occurrence selection', 'R-1
   local s = H.search(a)
   for _, height in ipairs({ 6, 10 }) do
     for index, cursor in ipairs({ { 1, 4 }, { 120, 4 }, { 120, 8 }, { 240, 4 } }) do
-      p.focus(s.id)
+      p.recent(s.id)
       vim.api.nvim_win_set_height(0, height)
       p.navigate(s, -#s.results)
       p.navigate(s, index - 1)
@@ -229,7 +229,7 @@ H.test('each source jump opens a fresh horizontal split below search', 'S-05', f
   local buf, first = p.action(s, 'open')
   H.eq(#vim.api.nvim_tabpage_list_wins(0), windows + 1)
   H.eq(vim.api.nvim_win_get_cursor(first), { 1, 0 })
-  p.focus(s.id)
+  p.recent(s.id)
   p.navigate(s, 1)
   local same_buf, second = p.action(s, 'open')
   assert(first ~= second)
@@ -258,7 +258,7 @@ H.test(
   function()
     local a = H.fixture()
     H.write(a .. '/one', 'abc\n')
-    local empty = p.new(a)
+    local empty = p.search(a)
     local windows = #vim.api.nvim_tabpage_list_wins(0)
     H.eq(p.open(empty), nil)
     H.eq(#vim.api.nvim_tabpage_list_wins(0), windows)
@@ -301,7 +301,7 @@ H.test('captured root survives later cwd changes', 'Q-08', function()
   local a, b = H.fixture()
   local original = vim.fn.getcwd()
   vim.cmd.cd(vim.fn.fnameescape(a))
-  local s = p.new()
+  local s = p.search()
   vim.cmd.cd(vim.fn.fnameescape(b))
   H.eq(s.root, require('searchlight.scope').path(a))
   vim.cmd.cd(vim.fn.fnameescape(original))

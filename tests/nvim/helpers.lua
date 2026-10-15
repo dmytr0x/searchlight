@@ -66,12 +66,20 @@ function H.wait(s, status)
   end
   return s
 end
-function H.search(root, changes)
+local function submit(s, changes)
   local p = require('searchlight')
-  local s = p.new(root)
-  p.set(s, changes or { query = 'abc', replacement = 'X' })
+  p.set(s, changes)
   p.refresh(s)
   return H.wait(s)
+end
+function H.search(root, changes)
+  return submit(require('searchlight').search(root), changes or { query = 'abc' })
+end
+function H.replace(root, changes)
+  return submit(
+    require('searchlight').replace(root),
+    changes or { query = 'abc', replacement = 'X' }
+  )
 end
 function H.update(s, changes, expected)
   require('searchlight').set(s, changes)
