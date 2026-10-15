@@ -123,7 +123,7 @@ H.test(
         { mappings = { search = '<Tab>', replace = '<C-I>' } },
         { mappings = { search = '<leader>sp', replace = (vim.g.mapleader or '\\') .. 'sp' } },
         { debounce_ms = 99, mappings = { search = '<F14>' } },
-        { context_size = -1, mappings = { search = '<F16>' } },
+        { defaults = { context = -1 }, mappings = { search = '<F16>' } },
       }) do
         H.eq(pcall(p.setup, options), false)
         H.eq(p.config, before)

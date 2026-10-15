@@ -36,6 +36,114 @@ local function panel(s)
   return vim.api.nvim_buf_get_lines(s.buf, 0, -1, false)
 end
 
+H.test('nested defaults merge, copy inputs and affect only new sessions', 'API,Defaults', function()
+  local config = vim.deepcopy(p.config)
+  local ok, err = xpcall(function()
+    local a = H.fixture()
+    local existing = p.search(a)
+    local options = {
+      defaults = { case = true, word = true, context = 0, max_results = 7, close_on_open = true },
+    }
+    local before = vim.deepcopy(options)
+    p.setup(options)
+    H.eq(options, before)
+    options.defaults.case, options.defaults.max_results = false, 99
+    p.setup({ defaults = { regex = true, word = false } })
+    p.setup({ defaults = {} })
+    p.setup()
+    local expected = {
+      case = true,
+      word = false,
+      regex = true,
+      open = false,
+      ignored = false,
+      context = 0,
+    }
+    for _, mode in ipairs({ 'search', 'replace' }) do
+      local s = p[mode](a)
+      H.eq(s.options, expected)
+      H.eq(s.config.max_results, 7)
+      H.eq(s.config.close_on_open, true)
+      p.set(s, { case = false, max_results = 3, close_on_open = false }, { refresh = false })
+      local override = p[mode](a, { max_results = 2, close_on_open = false })
+      H.eq(override.config.max_results, 2)
+      H.eq(override.config.close_on_open, false)
+    end
+    H.eq(existing.options.case, config.defaults.case)
+    H.eq(existing.options.context, config.defaults.context)
+    H.eq(existing.config.max_results, config.defaults.max_results)
+    H.eq(existing.config.close_on_open, config.defaults.close_on_open)
+    H.eq(p.config.defaults.max_results, 7)
+    H.eq(p.config.defaults.close_on_open, true)
+    H.eq(p.config.defaults.case, true)
+  end, debug.traceback)
+  p.setup(config)
+  assert(ok, err)
+end)
+
+H.test(
+  'invalid nested defaults and old top-level settings leave setup unchanged',
+  'API,Validation',
+  function()
+    local config = vim.deepcopy(p.config)
+    local id = sessions.next_id
+    local command = vim.api.nvim_get_commands({}).SearchlightNew
+    local mapping = vim.fn.maparg(config.mappings.search, 'n', false, true)
+    local invalid = {
+      false,
+      'defaults',
+      1,
+      { query = 'TODO' },
+      { root = '/' },
+      { replacement = '' },
+      { sections = {} },
+      { refresh = false },
+      { unknown = true },
+      { context = -1 },
+      { context = 0.5 },
+      { context = math.huge },
+      { context = 0 / 0 },
+      { max_results = 0 },
+      { max_results = 1.5 },
+      { max_results = math.huge },
+      { max_results = 0 / 0 },
+      { max_results = '10' },
+      { close_on_open = 1 },
+    }
+    for _, key in ipairs({ 'case', 'word', 'regex', 'open', 'ignored' }) do
+      for _, value in ipairs({ 1, 'true', {} }) do
+        invalid[#invalid + 1] = { [key] = value }
+      end
+    end
+    for _, defaults in ipairs(invalid) do
+      H.eq(pcall(p.setup, { defaults = defaults, mappings = { search = '<F18>' } }), false)
+      H.eq(p.config, config)
+      H.eq(vim.api.nvim_get_commands({}).SearchlightNew, command)
+      H.eq(vim.fn.maparg(config.mappings.search, 'n', false, true), mapping)
+    end
+    for _, key in ipairs({
+      'match_case_sensetivity',
+      'match_whole_words',
+      'use_regular_expressions',
+      'only_search_open_files',
+      'also_search_ignored_files',
+      'context_size',
+      'case',
+      'word',
+      'regex',
+      'open',
+      'ignored',
+      'context',
+      'max_results',
+      'close_on_open',
+    }) do
+      H.eq(pcall(p.setup, { [key] = true }), false)
+      H.eq(p.config, config)
+    end
+    H.eq(sessions.next_id, id)
+  end
+)
+
 for _, mode in ipairs({ 'search', 'replace' }) do
   H.test(
     mode .. ': creation renders final fields, controls, limits and visibility',
@@ -132,13 +240,15 @@ for _, mode in ipairs({ 'search', 'replace' }) do
       local config = vim.deepcopy(p.config)
       local ok, err = xpcall(function()
         p.setup({
-          match_case_sensetivity = true,
-          match_whole_words = true,
-          use_regular_expressions = true,
-          only_search_open_files = true,
-          also_search_ignored_files = true,
-          close_on_open = true,
-          context_size = 3,
+          defaults = {
+            case = true,
+            word = true,
+            regex = true,
+            open = true,
+            ignored = true,
+            close_on_open = true,
+            context = 3,
+          },
         })
         local options = {
           case = false,
@@ -173,7 +283,7 @@ for _, mode in ipairs({ 'search', 'replace' }) do
         H.eq(s.fields.query, '')
         H.eq(s.fields.include, {})
         H.eq(s.status, 'empty')
-        H.eq(p.config.context_size, 3)
+        H.eq(p.config.defaults.context, 3)
       end, debug.traceback)
       p.setup(config)
       assert(ok, err)
@@ -433,7 +543,7 @@ H.test(
     H.eq(s.results[1].path, b .. '/other.lua')
     H.eq(s.results[1].replacement, 'Y')
     H.eq(H.read(b .. '/other.lua'), 'abc other\n')
-    H.eq(p.config.max_results, 10000)
+    H.eq(p.config.defaults.max_results, 10000)
   end
 )
 

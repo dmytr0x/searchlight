@@ -218,7 +218,7 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
   local before = vim.deepcopy(p.config)
   local ok, err = xpcall(function()
     local existing = p.search(a)
-    p.setup({ match_case_sensetivity = true, use_regular_expressions = true })
+    p.setup({ defaults = { case = true, regex = true } })
     local s = p.search(a)
     H.eq(
       s.options,
@@ -229,9 +229,7 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
       { case = false, word = false, regex = false, open = false, ignored = false, context = 2 }
     )
     p.setup({
-      match_whole_words = true,
-      only_search_open_files = true,
-      also_search_ignored_files = true,
+      defaults = { word = true, open = true, ignored = true },
     })
     local all = p.search(a)
     H.eq(
@@ -247,8 +245,8 @@ H.test('settings configure modifier defaults for new sessions', 'Q-08,Q-09', fun
       p.search(a).options,
       { case = true, word = true, regex = true, open = true, ignored = true, context = 2 }
     )
-    H.eq(pcall(p.setup, { use_regular_expressions = 'true' }), false)
-    H.eq(pcall(p.setup, { match_case_sensetivity = 1 }), false)
+    H.eq(pcall(p.setup, { defaults = { regex = 'true' } }), false)
+    H.eq(pcall(p.setup, { defaults = { case = 1 } }), false)
   end, debug.traceback)
   p.config = before
   if not ok then

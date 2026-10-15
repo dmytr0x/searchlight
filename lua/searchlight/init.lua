@@ -7,21 +7,20 @@ local actions = require('searchlight.actions')
 local observe = require('searchlight.observe')
 local controller = require('searchlight.controller')
 local M = {
-  config = vim.tbl_extend('force', input.defaults, {
+  config = {
+    defaults = vim.deepcopy(input.defaults),
     mappings = { search = '<leader>sp', replace = '<leader>sr', recent = '<leader>sP' },
     open_in_new_tab = true,
-    close_on_open = false,
     syntax_highlighting = true,
     syntax_injections = false,
     syntax_max_file_bytes = 128 * 1024,
     debounce_ms = 150,
-    max_results = 10000,
     concurrency = 4,
     max_files = 100000,
     max_output_bytes = 4 * 1024 * 1024,
     max_source_bytes = 8 * 1024 * 1024,
     max_snapshot_bytes = 64 * 1024 * 1024,
-  }),
+  },
 }
 
 local function create_session(root, mode, options)
@@ -128,7 +127,17 @@ local function proposed_config(options)
   assert(type(options) == 'table', 'Invalid Searchlight configuration')
   local config = vim.deepcopy(M.config)
   for key, value in pairs(options) do
-    if key == 'mappings' then
+    if key == 'defaults' then
+      assert(type(value) == 'table', 'Invalid Searchlight configuration: defaults')
+      for name, setting in pairs(value) do
+        local default = input.defaults[name]
+        assert(
+          default ~= nil and input.valid_setting(name, setting, default),
+          'Invalid Searchlight configuration: defaults.' .. tostring(name)
+        )
+        config.defaults[name] = setting
+      end
+    elseif key == 'mappings' then
       assert(type(value) == 'table', 'Invalid Searchlight configuration: mappings')
       for action, lhs in pairs(value) do
         assert(

@@ -200,9 +200,10 @@ a new horizontal split below the panels, opens the exact occurrence, unfolds it,
 and centers it with `zz`. Source windows inherit the editor's pre-panel options and
 normal filetype/autocommand behavior.
 
-Set `close_on_open = true` to use a panel as a peeker: opening a match also deletes
-the panel and disposes its session. Enter in fields still refreshes the search, and
-Enter on file headers still collapses or expands them. The default is `false`.
+Set `defaults.close_on_open = true` in `setup()`, or pass `close_on_open = true`
+when creating a session, to use a panel as a peeker: opening a match also deletes
+the panel and disposes its session. Enter in fields still refreshes the search,
+and Enter on file headers still collapses or expands them. The default is `false`.
 
 Sessions survive hiding or ordinary window closure within the running Neovim
 instance. Their listed buffer names include the query (`searchlight://ID/term`) for
@@ -399,15 +400,18 @@ require('searchlight').setup({
   },
 
   open_in_new_tab = true, -- false opens new panels in the current tab
-  close_on_open = false, -- delete the panel after opening a match
 
-  -- Search defaults for new sessions
-  match_case_sensetivity = false, -- use this exact API spelling
-  match_whole_words = false,
-  use_regular_expressions = false,
-  only_search_open_files = false,
-  also_search_ignored_files = false,
-  context_size = 2,
+  -- Defaults inherited by new Search and Search & Replace sessions
+  defaults = {
+    case = false, -- match case
+    word = false, -- match whole words
+    regex = false, -- use regular expressions
+    open = false, -- only search open files
+    ignored = false, -- also search ignored files
+    context = 2, -- lines before and after matches; 0 hides context
+    max_results = 10000,
+    close_on_open = false, -- delete the panel after opening a match
+  },
 
   -- Result syntax colors
   syntax_highlighting = true,
@@ -416,7 +420,6 @@ require('searchlight').setup({
 
   -- Scheduling and per-session limits
   debounce_ms = 150, -- Lua set() and toggle mappings; Enter is immediate
-  max_results = 10000,
   concurrency = 4,
   max_files = 100000,
   max_output_bytes = 4 * 1024 * 1024,
@@ -425,18 +428,27 @@ require('searchlight').setup({
 })
 ```
 
-The case option is spelled **`match_case_sensetivity`** in the current API.
-For case-sensitive regex searches by default, set it and
-`use_regular_expressions` to `true`. Boolean settings require booleans;
-`context_size` is a nonnegative integer. Other numbers are positive integers,
-except `debounce_ms`, which can be zero. Unknown settings are rejected.
+`defaults` uses the same option names as `search()`, `replace()`, and `set()`.
+For case-sensitive regex searches by default, set `defaults.case` and
+`defaults.regex` to `true`. Creation options override defaults, including explicit
+`false` and `context = 0`; `set()` changes only the addressed session.
+Boolean settings require booleans; `defaults.context` is a nonnegative integer.
+Other numbers are positive integers, except `debounce_ms`, which can be zero.
+Unknown settings are rejected.
 Existing sessions keep their captured mode and search configuration when `setup()`
-runs again. Omitted settings retain their configured values, including entries in a
-partial `mappings` table. Each mapping accepts a nonempty string or `false` to
-disable it; commands and Lua APIs remain available. Unknown keys, invalid values,
+runs again. Omitted settings retain their configured values, including entries in
+partial `defaults` and `mappings` tables. Each mapping accepts a nonempty string or
+`false` to disable it; commands and Lua APIs remain available. Unknown keys, invalid values,
 and keys resolving to the same sequence for different actions are rejected before
 any registration changes. Remapping removes only mappings still owned by
 Searchlight; user overrides survive later setup calls.
+
+When migrating from the previous configuration format, move session defaults into
+`defaults`: `match_case_sensetivity` becomes `case`, `match_whole_words` becomes
+`word`, `use_regular_expressions` becomes `regex`, `only_search_open_files` becomes
+`open`, `also_search_ignored_files` becomes `ignored`, and `context_size` becomes
+`context`. Move `max_results` and `close_on_open` into `defaults` with their names
+unchanged. The old top-level settings are no longer accepted.
 
 ### Syntax colors and highlight groups
 
@@ -544,17 +556,10 @@ Lua `nil` means omission. Unknown keys and invalid mixed patches are rejected
 before changing session state or reading pending native edits. After validation,
 explicit API keys win and unmentioned native edits survive. Mode is immutable.
 
-The established `setup()` names supply defaults for the shorter session keys:
-
-| `setup()` setting | Session key |
-| --- | --- |
-| `match_case_sensetivity` | `case` |
-| `match_whole_words` | `word` |
-| `use_regular_expressions` | `regex` |
-| `only_search_open_files` | `open` |
-| `also_search_ignored_files` | `ignored` |
-| `context_size` | `context` |
-| `max_results`, `close_on_open` | Same names. |
+`setup({ defaults = { ... } })` supplies initial values for `case`, `word`,
+`regex`, `open`, `ignored`, `context`, `max_results`, and `close_on_open`, using
+exactly the same names as the session keys above. Fields such as `query`, `root`,
+and `replacement`, as well as `sections` and `refresh`, remain session options.
 
 Syntax and performance settings without an interactive control remain `setup()`
 settings. Patterns keep ripgrep syntax and the single-line query/replacement

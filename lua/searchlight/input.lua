@@ -4,35 +4,30 @@ local M = {}
 local controls = {
   {
     option = 'case',
-    setting = 'match_case_sensetivity',
     label = 'Aa',
     key = 'c',
     meaning = 'Match case',
   },
   {
     option = 'word',
-    setting = 'match_whole_words',
     label = 'wd',
     key = 'w',
     meaning = 'Match whole words',
   },
   {
     option = 'regex',
-    setting = 'use_regular_expressions',
     label = '.*',
     key = 'x',
     meaning = 'Use regular expressions',
   },
   {
     option = 'open',
-    setting = 'only_search_open_files',
     label = '󰥩',
     key = 'o',
     meaning = 'Only search open files',
   },
   {
     option = 'ignored',
-    setting = 'also_search_ignored_files',
     label = '',
     key = 'g',
     meaning = 'Also search ignored files',
@@ -40,9 +35,9 @@ local controls = {
 }
 
 M.controls = controls
-M.defaults = { context_size = 2 }
+M.defaults = { context = 2, max_results = 10000, close_on_open = false }
 for _, control in ipairs(controls) do
-  M.defaults[control.setting] = false
+  M.defaults[control.option] = false
 end
 
 function M.valid_context_size(value)
@@ -50,9 +45,9 @@ function M.valid_context_size(value)
 end
 
 function M.options(config)
-  local options = { context = config.context_size }
+  local options = { context = config.defaults.context }
   for _, control in ipairs(controls) do
-    options[control.option] = config[control.setting] == true
+    options[control.option] = config.defaults[control.option]
   end
   return options
 end
@@ -213,7 +208,7 @@ function M.execution(execution, default)
 end
 
 function M.valid_setting(key, value, default)
-  if key == 'context_size' then
+  if key == 'context' then
     return M.valid_context_size(value)
   end
   if type(default) == 'boolean' then
@@ -221,6 +216,7 @@ function M.valid_setting(key, value, default)
   end
   return type(default) == 'number'
     and type(value) == 'number'
+    and value < math.huge
     and value == math.floor(value)
     and value >= (key == 'debounce_ms' and 0 or 1)
 end

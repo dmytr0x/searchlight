@@ -20,9 +20,9 @@ for _, mode in ipairs({ 'search', 'replace' }) do
     function()
       configured(function()
         local a = H.fixture()
-        H.eq(p.config.close_on_open, false)
+        H.eq(p.config.defaults.close_on_open, false)
         local persistent = p[mode](a)
-        p.setup({ close_on_open = true })
+        p.setup({ defaults = { close_on_open = true } })
         local command = mode == 'search' and 'SearchlightNew' or 'SearchlightReplaceNew'
         vim.cmd(command .. ' ' .. vim.fn.fnameescape(a))
         local peeker = sessions.get()
@@ -32,8 +32,8 @@ for _, mode in ipairs({ 'search', 'replace' }) do
         local another = p[mode](a, override)
         override.close_on_open = true
         H.eq(another.config.close_on_open, false)
-        H.eq(p.config.close_on_open, true)
-        p.setup({ close_on_open = false })
+        H.eq(p.config.defaults.close_on_open, true)
+        p.setup({ defaults = { close_on_open = false } })
         H.eq(peeker.config.close_on_open, true)
         H.eq(p[mode](a).config.close_on_open, false)
       end)
@@ -57,7 +57,7 @@ for _, mode in ipairs({ 'search', 'replace' }) do
       local ok, err = xpcall(function()
         keys('<F18>')
         H.eq({ s.root, s.mode, s.config.close_on_open }, { a, mode, true })
-        H.eq(p.config.close_on_open, false)
+        H.eq(p.config.defaults.close_on_open, false)
         H.update(s, { query = 'abc' })
         p.navigate(s, 1)
         keys('<CR>')
@@ -114,7 +114,7 @@ H.test(
     local id, buf, win =
       sessions.next_id, vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
     for _, value in ipairs({ 'true', 1, {} }) do
-      H.eq(pcall(p.setup, { close_on_open = value }), false)
+      H.eq(pcall(p.setup, { defaults = { close_on_open = value } }), false)
     end
     for _, mode in ipairs({ 'search', 'replace' }) do
       for _, options in ipairs({

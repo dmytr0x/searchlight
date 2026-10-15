@@ -158,6 +158,9 @@ function M.initial(root, config, mode)
     config = vim.deepcopy(config),
   }
   initial.config.mappings = nil
+  initial.config.max_results = config.defaults.max_results
+  initial.config.close_on_open = config.defaults.close_on_open
+  initial.config.defaults = nil
   if capability.replacement then
     initial.fields.replacement, initial.sections.replace = '', true
   end
