@@ -165,6 +165,25 @@ end
 
 for _, close in ipairs({ 'close', 'bdelete', 'bwipeout' }) do
   H.test(
+    'reopen keeps the intentionally activated panel after ' .. close .. ' in the same callback',
+    'Reopen,Lifecycle',
+    function()
+      local a = H.fixture()
+      local surviving = p.replace(a, { query = 'surviving', replacement = 'saved' })
+      local departing = p.search(a, { query = 'departing' })
+      p.recent(surviving.id)
+      -- Do not yield to scheduled departure cleanup between activation and disposal.
+      if close == 'close' then
+        p.close(departing)
+      else
+        vim.cmd(close .. '! ' .. departing.buf)
+      end
+      H.eq(p.reopen(), surviving)
+      H.eq(sessions.get(departing.id), nil)
+    end
+  )
+
+  H.test(
     'reopen after ' .. close .. ' keeps the latest panel when Neovim enters an older panel',
     'Reopen,Lifecycle',
     function()

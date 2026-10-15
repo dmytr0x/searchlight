@@ -272,6 +272,8 @@ function M.activate(s)
   for name, value in pairs(panel_options) do
     vim.api.nvim_set_option_value(name, value, { win = win, scope = 'local' })
   end
+  -- An intentional visit supersedes the panel left during the buffer switch.
+  departing_panel = nil
   M.touch(s)
   require('searchlight.highlight').request()
 end
