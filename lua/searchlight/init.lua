@@ -9,6 +9,7 @@ local controller = require('searchlight.controller')
 local M = {
   config = vim.tbl_extend('force', input.defaults, {
     mappings = { search = '<leader>sp', replace = '<leader>sr', recent = '<leader>sP' },
+    close_on_open = false,
     syntax_highlighting = true,
     syntax_injections = false,
     syntax_max_file_bytes = 128 * 1024,
@@ -22,9 +23,20 @@ local M = {
   }),
 }
 
-local function create_session(root, mode)
+local function create_session(root, mode, options)
+  if type(root) == 'table' and options == nil then
+    options, root = root, nil
+  end
+  assert(options == nil or type(options) == 'table', 'Invalid Searchlight session options')
+  for key, value in pairs(options or {}) do
+    assert(
+      key == 'close_on_open' and type(value) == 'boolean',
+      'Invalid Searchlight session option: ' .. tostring(key)
+    )
+  end
+  local config = vim.tbl_extend('force', M.config, options or {})
   root = scope.path(root and root ~= '' and root or vim.fn.getcwd())
-  local s = sessions.create(root, M.config, mode)
+  local s = sessions.create(root, config, mode)
   view.attach(s)
   view.render(s)
   sessions.activate(s)
@@ -32,12 +44,12 @@ local function create_session(root, mode)
   return s
 end
 
-function M.search(root)
-  return create_session(root, 'search')
+function M.search(root, options)
+  return create_session(root, 'search', options)
 end
 
-function M.replace(root)
-  return create_session(root, 'replace')
+function M.replace(root, options)
+  return create_session(root, 'replace', options)
 end
 
 function M.recent(id)

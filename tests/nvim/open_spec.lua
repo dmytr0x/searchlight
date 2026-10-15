@@ -163,6 +163,42 @@ for _, mode in ipairs({ 'search', 'replace' }) do
   )
 
   test(
+    'peeker opens the selected occurrence and centers after closing its panel',
+    'Open,Configuration',
+    function()
+      with_editor_state(function()
+        local a = H.fixture()
+        local path = a .. '/file with spaces.fixture'
+        local lines = {}
+        for i = 1, 240 do
+          lines[i] = 'source line ' .. i
+        end
+        lines[120] = '雪 abc abc'
+        H.write(path, table.concat(lines, '\n') .. '\n')
+        local expected = window_options()
+        local surviving = p[mode](a)
+        local s = p[mode](a, { close_on_open = true })
+        H.update(s, { query = 'abc' })
+        p.navigate(s, 1)
+        local selected = s.results[2].id
+        local buf, win = p.open(s)
+        H.eq(vim.api.nvim_get_current_win(), win)
+        H.eq(vim.api.nvim_buf_get_name(buf), path)
+        H.eq(vim.api.nvim_win_get_cursor(win), { 120, 8 })
+        H.eq(window_options(), expected)
+        vim.cmd('redraw!')
+        H.eq(vim.fn.winline(), math.floor(vim.api.nvim_win_get_height(win) / 2) + 1)
+        H.eq(vim.fn.getreg('/'), '\\c\\Vabc')
+        H.eq(vim.v.hlsearch, 1)
+        H.eq(s.selected, selected)
+        H.eq(require('searchlight.sessions').get(s.id), nil)
+        H.eq(vim.fn.win_findbuf(s.buf), {})
+        H.eq(p.recent(), surviving)
+      end)
+    end
+  )
+
+  test(
     'opening a loaded modified result preserves its buffer and editor settings',
     'S-05,B-01',
     function()

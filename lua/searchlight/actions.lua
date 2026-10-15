@@ -97,6 +97,10 @@ function M.open(s)
   end
   vim.cmd.edit(vim.fn.fnameescape(path))
   local buf = vim.api.nvim_get_current_buf()
+  if s.config.close_on_open then
+    -- Close only after the source opens, before centering in the final layout.
+    controller.close(s)
+  end
   local line = math.min(result.line, vim.api.nvim_buf_line_count(buf))
   local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1] or ''
   vim.api.nvim_win_set_cursor(win, { line, math.min(result.start, #text) })

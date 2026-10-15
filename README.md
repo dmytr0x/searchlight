@@ -195,6 +195,10 @@ a new horizontal split below the panels, opens the exact occurrence, unfolds it,
 and centers it with `zz`. Source windows inherit the editor's pre-panel options and
 normal filetype/autocommand behavior.
 
+Set `close_on_open = true` to use a panel as a peeker: opening a match also deletes
+the panel and disposes its session. Enter in fields still refreshes the search, and
+Enter on file headers still collapses or expands them. The default is `false`.
+
 Sessions survive hiding or ordinary window closure within the running Neovim
 instance. Their listed buffer names include the query (`searchlight://ID/term`) for
 buffer pickers and `:ls`. `:SearchlightFocus` restores a panel at the top; selecting
@@ -241,6 +245,18 @@ vim.keymap.set('n', '<leader>sR', function()
   require('searchlight').replace()
 end, { desc = 'Searchlight: search and replace' })
 ```
+
+Pass session options in a mapping callback to make a dedicated peeker mapping:
+
+```lua
+vim.keymap.set('n', '<leader>sk', function()
+  require('searchlight').search({ close_on_open = true })
+end, { desc = 'Searchlight: peek at a match' })
+```
+
+`replace({ close_on_open = true })` works the same way. To specify a root as well,
+use `search('/path/to/project', { close_on_open = true })`. A session override of
+`false` keeps its panel open even when the global default is `true`.
 
 **Migration:** `SearchlightNew` now creates Search. For the former combined workflow,
 use `SearchlightReplaceNew` or `replace()`. Lua `new()` and `focus()` have been
@@ -367,6 +383,8 @@ require('searchlight').setup({
     recent = '<leader>sP',
   },
 
+  close_on_open = false, -- delete the panel after opening a match
+
   -- Search defaults for new sessions
   match_case_sensetivity = false, -- use this exact API spelling
   match_whole_words = false,
@@ -441,6 +459,11 @@ overrides. `SearchlightMatch` and `SearchlightSelected` always follow `Search` a
 ## Lua API
 
 Use a session object returned by `search()` or `replace()`, or its numeric ID.
+Both functions accept an optional `close_on_open` boolean override, either as
+`search(root, options)` / `replace(root, options)` or as `search(options)` /
+`replace(options)` to use the current directory. Omitting it uses the `setup()`
+default. No other per-session creation options are accepted.
+
 For example, a Search session:
 
 ```lua
@@ -478,13 +501,13 @@ of which can contain comma-separated globs. `setup()` option names and per-sessi
 | Function | Purpose |
 | --- | --- |
 | `setup(options)` | Configure defaults and register commands, mappings, and events. |
-| `search(root)` | Create, activate, and return a Search session. Root is optional. |
-| `replace(root)` | Create, activate, and return a Search & Replace session. Root is optional. |
+| `search(root, options)` | Create, activate, and return a Search session. Root and options are optional. |
+| `replace(root, options)` | Create, activate, and return a Search & Replace session. Root and options are optional. |
 | `recent(id)` | Restore and return the requested session; no ID restores the most recently used surviving one. |
 | `set(session, changes)` | Update fields, options, or root and debounce a search. |
 | `refresh(session)` | Search immediately with the current inputs. |
 | `navigate(session, delta)` | Move the selection by an occurrence offset. |
-| `open(session)` | Open the selected source occurrence. |
+| `open(session)` | Open the selected source occurrence; dispose the session if `close_on_open` is enabled. |
 | `action(session, name, arg)` | Invoke a panel action, such as `exclude`, `replace_next`, or `replace_all`. |
 | `close(session)` | Dispose a session and delete its panel. |
 
