@@ -264,6 +264,7 @@ local function add_help(s, add)
   add(
     'Use :SearchlightFocus [id] to restore; :SearchlightClose to close. Filters keep hidden values.'
   )
+  add(':SearchlightReopen reopens the latest panel with its settings, even after deletion.')
   add('[Session]')
   add(key('d') .. ' Root | ' .. key('L') .. ' Limit | ' .. key('R') .. ' Refresh')
   add(
@@ -677,15 +678,6 @@ end
 
 local function register_events(s)
   local group = vim.api.nvim_create_augroup('SearchlightPanel' .. s.id, { clear = true })
-  vim.api.nvim_create_autocmd('BufEnter', {
-    group = group,
-    buffer = s.buf,
-    callback = function()
-      if sessions.owns(s) then
-        sessions.touch(s)
-      end
-    end,
-  })
   vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'InsertLeave' }, {
     group = group,
     buffer = s.buf,

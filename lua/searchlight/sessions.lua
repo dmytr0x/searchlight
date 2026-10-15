@@ -9,6 +9,7 @@ local M = {
 function M.touch(s)
   M.activation = (M.activation or 0) + 1
   s.activated_at, M.last = M.activation, s.id
+  M.previous = { id = s.id }
 end
 local panel_options = {
   wrap = false,
@@ -20,6 +21,8 @@ local panel_options = {
   virtualedit = 'onemore',
 }
 local editor_options = {}
+local closing_panel = false
+local departing_panel
 
 function M.editor_options(win)
   win = win == 0 and vim.api.nvim_get_current_win() or win
@@ -41,9 +44,36 @@ function M.restore_editor_options(win, options)
 end
 
 local window_group = vim.api.nvim_create_augroup('SearchlightPanelOptions', { clear = true })
+vim.api.nvim_create_autocmd('BufEnter', {
+  group = window_group,
+  callback = function(event)
+    -- Deleting the current panel can automatically enter an older panel. Keep
+    -- the deleted panel as the reopen target until the next intentional visit.
+    if closing_panel then
+      closing_panel = false
+      return
+    end
+    local s = M.by_buf[event.buf]
+    if M.owns(s) then
+      M.touch(s)
+    end
+  end,
+})
 vim.api.nvim_create_autocmd('BufLeave', {
   group = window_group,
   callback = function(event)
+    -- :bdelete can enter a fallback buffer before emitting BufDelete. Remember
+    -- the panel being left until that command's events have finished.
+    local s = M.by_buf[event.buf]
+    departing_panel = s and M.previous and M.previous.id == s.id and s or nil
+    if departing_panel then
+      local departed = departing_panel
+      vim.schedule(function()
+        if departing_panel == departed then
+          departing_panel = nil
+        end
+      end)
+    end
     local win = vim.api.nvim_get_current_win()
     if vim.api.nvim_win_get_buf(win) == event.buf then
       M.restore_editor_options(win)
@@ -172,6 +202,25 @@ end
 function M.dispose(s)
   if not s or s.disposed then
     return
+  end
+  if vim.api.nvim_get_current_buf() == s.buf then
+    closing_panel = true
+  end
+  if M.previous and M.previous.id == s.id or departing_panel == s then
+    departing_panel = nil
+    require('searchlight.controller').synchronize(s, 'capture')
+    -- Keep only inputs and configuration, never jobs, results or source snapshots.
+    M.previous = {
+      initial = vim.deepcopy({
+        root = s.root,
+        mode = s.mode,
+        fields = s.fields,
+        options = s.options,
+        sections = s.sections,
+        heading = s.search_heading,
+        config = s.config,
+      }),
+    }
   end
   s.disposed = true
   M.by_id[s.id], M.by_buf[s.buf] = nil, nil

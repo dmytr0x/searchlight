@@ -55,6 +55,27 @@ function M.replace(root, options)
   return create_session(root, 'replace', options)
 end
 
+function M.reopen()
+  local previous = sessions.previous
+  if not previous then
+    vim.notify('No previous Searchlight session', vim.log.levels.INFO)
+    return
+  end
+  local s = previous.id and sessions.get(previous.id)
+  if not s then
+    local initial = vim.deepcopy(previous.initial)
+    s = sessions.create(initial.root, initial.config, initial.mode, initial)
+    view.attach(s)
+    view.render(s)
+    sessions.activate(s)
+    view.focus_field(s, 'query')
+    controller.execute(s, 'immediate')
+  else
+    sessions.activate(s)
+  end
+  return s
+end
+
 function M.recent(id)
   local s = sessions.get(id or sessions.last)
   if not s then
@@ -199,6 +220,9 @@ function M.setup(options)
   })
   vim.api.nvim_create_user_command('SearchlightClose', function()
     M.close()
+  end, { force = true })
+  vim.api.nvim_create_user_command('SearchlightReopen', function()
+    M.reopen()
   end, { force = true })
   register_mappings()
   observe.setup()

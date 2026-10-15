@@ -70,7 +70,7 @@ Add this specification to your [lazy.nvim](https://lazy.folke.io/spec) plugin li
 
 This runs `require('searchlight').setup()` at startup and registers the commands and
 default global mappings. For command-only lazy loading, replace `lazy = false` with
-`cmd = { 'SearchlightNew', 'SearchlightReplaceNew', 'SearchlightFocus', 'SearchlightClose' }`; the default
+`cmd = { 'SearchlightNew', 'SearchlightReplaceNew', 'SearchlightFocus', 'SearchlightReopen', 'SearchlightClose' }`; the default
 global mappings are registered after the plugin loads.
 
 ### Other plugin managers or a local checkout
@@ -122,6 +122,8 @@ directory.
 
 Both session types coexist. `:SearchlightFocus [id]` or `<leader>sP` restores a
 surviving session with its original mode; there is no mode switch.
+Use `:SearchlightReopen` to return to the most recently used panel, including after
+closing or deleting it, with the same mode, inputs, options, and settings.
 
 `<localleader>` defaults to `\`, so Replace all is `\A` unless you configured a
 different local leader. Set `vim.g.maplocalleader = ','` **before opening a panel**
@@ -204,7 +206,16 @@ Sessions survive hiding or ordinary window closure within the running Neovim
 instance. Their listed buffer names include the query (`searchlight://ID/term`) for
 buffer pickers and `:ls`. `:SearchlightFocus` restores a panel at the top; selecting
 its buffer also restores it. `:bdelete`, `:bwipeout`, or `:SearchlightClose` dispose
-the session. Repeating `setup()` preserves surviving sessions.
+the session. `:SearchlightReopen` can recreate the most recently used panel after
+disposal, retaining its root, mode, query, replacement, filters, search options,
+section visibility, and captured configuration, including `close_on_open`, syntax
+settings, and resource limits. Changing directories or calling `setup()` does not
+change these saved settings. A surviving panel is focused without rerunning its
+search; a recreated panel runs a fresh search and never applies replacements
+automatically. Results, selection, and occurrence exclusions survive while the
+session exists; disposed panels rebuild results. Only the latest panel's settings
+are retained, within the current Neovim process. Repeating `setup()` preserves
+surviving sessions.
 
 Resize and scroll normally. Long lines do not wrap; horizontal scrolling,
 `scrolloff`, and `sidescrolloff` work, including window-local overrides.
@@ -219,6 +230,7 @@ while retaining its active value. Search has no replacement section to reveal.
 | `:SearchlightNew [root]` | `<leader>sp` | Create an independent Search session. |
 | `:SearchlightReplaceNew [root]` | `<leader>sr` | Create an independent Search & Replace session. |
 | `:SearchlightFocus [id]` | `<leader>sP` | Focus a requested session or the most recently used surviving one. |
+| `:SearchlightReopen` | — | Reopen the most recently used panel with its original mode and settings, recreating it if disposed. |
 | `:SearchlightClose` | — | Delete the current panel and dispose its session. |
 
 The root defaults to the invoking window's current directory and remains captured
@@ -567,6 +579,7 @@ Enter and `refresh()` submit immediately. The execution table accepts only `refr
 | `search(root, options)` | Create, activate, and return a Search session. Root and options are optional; also accepts `search(options)`. |
 | `replace(root, options)` | Create, activate, and return a Search & Replace session. Root and options are optional; also accepts `replace(options)`. |
 | `recent(id)` | Restore and return the requested session; no ID restores the most recently used surviving one. |
+| `reopen()` | Restore and return the most recently used panel; recreate it with its saved settings and refresh if disposed. No previous panel reports an informational message. |
 | `set(session, changes, execution)` | Update session values and choose a refresh policy. Execution is optional. |
 | `refresh(session)` | Search immediately with the current inputs. |
 | `navigate(session, delta)` | Move the selection by an occurrence offset. |
